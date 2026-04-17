@@ -7,7 +7,7 @@ import threading
 import json
 
 # from utils.proxy_protocols import parse_vless_protocol
-from utils.network_tools import get_default_interface_ipv4
+from utils.network_tools import configure_tcp_keepalive, get_default_interface_ipv4, get_interface_name_by_ipv4
 from utils.packet_templates import ClientHelloMaker
 from fake_tcp import FakeInjectiveConnection, FakeTcpInjector
 
@@ -35,6 +35,7 @@ FAKE_SNI = config["FAKE_SNI"].encode()
 CONNECT_IP = config["CONNECT_IP"]
 CONNECT_PORT = config["CONNECT_PORT"]
 INTERFACE_IPV4 = get_default_interface_ipv4(CONNECT_IP)
+INTERFACE_NAME = get_interface_name_by_ipv4(INTERFACE_IPV4)
 DATA_MODE = "tls"
 BYPASS_METHOD = "wrong_seq"
 
@@ -55,9 +56,7 @@ async def relay_main_loop(sock_1: socket.socket, sock_2: socket.socket, peer_tas
                 if first_prefix_data:
                     data = first_prefix_data + data
                     first_prefix_data = b""
-                sent_len = await loop.sock_sendall(sock_2, data)
-                if sent_len != len(data):
-                    raise ValueError("incomplete send")
+                await loop.sock_sendall(sock_2, data)
             except Exception:
                 sock_1.close()
                 sock_2.close()
@@ -130,10 +129,7 @@ async def handle(incoming_sock: socket.socket, incoming_remote_addr):
         outgoing_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         outgoing_sock.setblocking(False)
         outgoing_sock.bind((INTERFACE_IPV4, 0))
-        outgoing_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        outgoing_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 11)
-        outgoing_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2)
-        outgoing_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        configure_tcp_keepalive(outgoing_sock)
         src_port = outgoing_sock.getsockname()[1]
         fake_injective_conn = FakeInjectiveConnection(outgoing_sock, INTERFACE_IPV4, CONNECT_IP, src_port, CONNECT_PORT,
                                                       fake_data,
@@ -195,29 +191,25 @@ async def handle(incoming_sock: socket.socket, incoming_remote_addr):
 
 
 async def main():
+    if not INTERFACE_IPV4:
+        sys.exit("could not determine a usable local IPv4 address")
+
     mother_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     mother_sock.setblocking(False)
     mother_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     mother_sock.bind((LISTEN_HOST, LISTEN_PORT))
-    mother_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    mother_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 11)
-    mother_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2)
-    mother_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+    configure_tcp_keepalive(mother_sock)
     mother_sock.listen()
     loop = asyncio.get_running_loop()
     while True:
         incoming_sock, addr = await loop.sock_accept(mother_sock)
         incoming_sock.setblocking(False)
-        incoming_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        incoming_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 11)
-        incoming_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2)
-        incoming_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        configure_tcp_keepalive(incoming_sock)
         asyncio.create_task(handle(incoming_sock, addr))
 
 
 if __name__ == "__main__":
-    w_filter = "tcp and " + "(" + "(ip.SrcAddr == " + INTERFACE_IPV4 + " and ip.DstAddr == " + CONNECT_IP + ")" + " or " + "(ip.SrcAddr == " + CONNECT_IP + " and ip.DstAddr == " + INTERFACE_IPV4 + ")" + ")"
-    fake_tcp_injector = FakeTcpInjector(w_filter, fake_injective_connections)
+    fake_tcp_injector = FakeTcpInjector(INTERFACE_IPV4, CONNECT_IP, fake_injective_connections, INTERFACE_NAME)
     threading.Thread(target=fake_tcp_injector.run, args=(), daemon=True).start()
     print("هشن شومافر تیامح دینکیم هدافتسا دازآ تنرتنیا هب یسرتسد یارب همانرب نیا زا رگا")
     print(
