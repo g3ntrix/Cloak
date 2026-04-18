@@ -31,9 +31,18 @@ with open(config_path, 'r') as f:
 
 LISTEN_HOST = config["LISTEN_HOST"]
 LISTEN_PORT = config["LISTEN_PORT"]
-FAKE_SNI = config["FAKE_SNI"].encode()
 CONNECT_IP = config["CONNECT_IP"]
 CONNECT_PORT = config["CONNECT_PORT"]
+_fsn = str(config.get("FAKE_SNI", "")).strip()
+_cip = str(CONNECT_IP).strip()
+if not _cip:
+    print("error: set CONNECT_IP in config.json (real server IP for the Python layer).", file=sys.stderr)
+    sys.exit(1)
+if not _fsn:
+    print("error: set FAKE_SNI in config.json (SNI string sent in the spoofed ClientHello).", file=sys.stderr)
+    sys.exit(1)
+CONNECT_IP = _cip
+FAKE_SNI = _fsn.encode()
 INTERFACE_IPV4 = get_default_interface_ipv4(CONNECT_IP)
 INTERFACE_NAME = get_interface_name_by_ipv4(INTERFACE_IPV4)
 DATA_MODE = "tls"

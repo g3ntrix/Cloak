@@ -1,19 +1,32 @@
-# SNI-Spoofing
-Bypass DPI with IP/TCP-Header manipulation
+# SNI-Spoofing-GUI
 
-## Platform support
+Companion repository: Python DPI-bypass listener (`main.py`, etc.) plus a **macOS Swift app** (“Cloak”) that runs the listener and an embedded **Xray** client with local SOCKS.
 
-- Windows: uses `pydivert` / WinDivert for packet capture and reinjection.
-- macOS: uses `scapy` with passive sniffing plus raw packet injection.
+## macOS app (recommended)
 
-## Running on macOS
+- Build a universal **Cloak.app** (Apple Silicon + Intel) and embed a universal **xray** binary:
 
-- Install dependencies from [requirements.txt](/Users/ho/Desktop/there-is-no-internet/SNI-Spoofing/requirements.txt).
-- Run the program with elevated privileges so packet sniffing and raw packet injection are permitted.
-- TCP keepalive options are mapped to the macOS socket constants automatically.
+  ```bash
+  chmod +x scripts/build-release.sh macos-app/scripts/*.sh
+  ./scripts/build-release.sh
+  ```
 
-حمایت کنید کارهای بزرگی در دست انجام هست:
+- **Offline / restricted network:** put official release zips into `macos-app/third_party/xray-zips/` (see that folder’s README), then run `macos-app/scripts/fetch-xray-vendor.sh` (or the release script above).
 
-USDT (BEP20): 0x76a768B53Ca77B43086946315f0BDF21156bF424
+- Default listener `config.json` keys are shipped empty except bind address/port so you can fill in **CONNECT_** / **FAKE_SNI** in-app or in JSON.
 
-USDT (TRC20): TU5gKvKqcXPn8itp1DouBCwcqGHMemBm8o
+**Apple Silicon vs Intel:** an **arm64-only** `xray` does **not** run on Intel Macs. The release script builds **three** app bundles: `Cloak-arm64.app`, `Cloak-x86_64.app`, and **`Cloak.app`** (universal Swift + universal `xray` — the usual artifact to ship). Single-arch apps embed a thinned `xray` slice where possible.
+
+If `curl` from GitHub fails on your network, drop the official release zips into `macos-app/third_party/xray-zips/` (see that folder’s README) and run the fetch script again.
+
+Details: [`macos-app/README.md`](macos-app/README.md)
+
+## Python engine (reference / same layout as typical SNI-Spoofing)
+
+- Install deps: `pip install -r requirements.txt`
+- Configure `config.json` beside `main.py`
+- Run with the privileges your OS requires for raw capture/injection
+
+## License
+
+See [LICENSE](LICENSE).
