@@ -82,22 +82,31 @@ final class AppState: ObservableObject {
         Task { [weak self] in await self?.runDirectIPLookup() }
     }
 
+    /// Adds bundled example profiles if they are not already present (by server/port/SNI).
+    /// Runs on every launch but only appends missing entries — not only on first empty install,
+    /// so users who already had other profiles still get these once.
     private func seedBundledProfilesIfNeeded() {
-        guard profiles.isEmpty else { return }
         let seeds = [
             "trojan://humanity@127.0.0.1:40443?security=tls&sni=www.ignitelimit.com&type=ws&path=/assignment&host=www.ignitelimit.com#Amirstar",
             "trojan://humanity@127.0.0.1:40443?security=tls&sni=www.creationlong.org&allowInsecure=1&type=ws&path=/assignment&host=www.creationlong.org#cloud"
         ]
-        var imported: [Profile] = []
+        var appended: [Profile] = []
         for raw in seeds {
-            if let p = try? ProfileImporter.importFrom(raw) {
-                imported.append(p)
+            guard let parsed = try? ProfileImporter.importFrom(raw) else { continue }
+            let dup = profiles.contains { existing in
+                existing.kind == parsed.kind
+                    && existing.server == parsed.server
+                    && existing.serverPort == parsed.serverPort
+                    && existing.tls.serverName == parsed.tls.serverName
+            }
+            if !dup {
+                appended.append(parsed)
             }
         }
-        guard !imported.isEmpty else { return }
-        profiles = imported
+        guard !appended.isEmpty else { return }
+        profiles.append(contentsOf: appended)
         if settings.activeProfileID == nil {
-            settings.activeProfileID = imported.first?.id
+            settings.activeProfileID = profiles.first?.id
             saveSettings()
         }
         saveProfiles()
