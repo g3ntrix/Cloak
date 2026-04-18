@@ -25,6 +25,8 @@ struct AboutView: View {
                             .foregroundStyle(.secondary)
                         Text("g3ntrix")
                             .font(.system(size: 22, weight: .bold, design: .rounded))
+                        Link("t.me/g3ntrix", destination: URL(string: "https://t.me/g3ntrix")!)
+                            .font(.system(size: 13, weight: .medium))
                     }
                 }
 
