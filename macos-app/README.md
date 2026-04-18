@@ -2,6 +2,8 @@
 
 Cloak is an easy-to-use macOS client built around SNI spoofing. It takes CDN profile configs directly, includes the core connection logic inside the app, and removes the need to run a separate V2Ray/Xray client.
 
+![Cloak — Dashboard](screenshot/sc1.png)
+
 ## What it does
 
 - Import and manage profiles

@@ -2,6 +2,8 @@
 
 Companion repository: Python DPI-bypass listener (`main.py`, etc.) plus a **macOS Swift app** (“Cloak”) that runs the listener and an embedded **Xray** client with local SOCKS.
 
+![Cloak — Dashboard](macos-app/screenshot/sc1.png)
+
 ## Download (macOS)
 
 [Cloak-1.0.0.dmg](https://github.com/g3ntrix/Cloak/releases/download/v1.0.0/Cloak-1.0.0.dmg)
