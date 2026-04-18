@@ -20,7 +20,7 @@ struct SettingsView: View {
                                 .font(.system(size: 13, weight: .semibold))
                             Spacer()
                             Button("Restore default") {
-                                listenerDraft = ListenerProjectConfig.defaultJSONString()
+                                listenerDraft = ListenerProjectConfig.factoryRestoreJSONString()
                                 jsonError = nil
                             }
                             .buttonStyle(.bordered)
@@ -42,6 +42,26 @@ struct SettingsView: View {
                         if let e = jsonError {
                             Text(e).font(.caption).foregroundStyle(.red)
                         }
+                    }
+                }
+
+                Card {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Local SOCKS proxy")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Xray listens here — set your browser or system proxy to this address and port.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        LabeledField(
+                            title: "Host",
+                            hint: "Usually 127.0.0.1",
+                            text: proxyHostBinding
+                        )
+                        LabeledField(
+                            title: "Port",
+                            hint: "Default 2080",
+                            text: proxyPortBinding
+                        )
                     }
                 }
 
@@ -101,6 +121,29 @@ struct SettingsView: View {
             listenerDraft = (try? app.listenerProject.encodeJSONString()) ?? ListenerProjectConfig.defaultJSONString()
             app.privilegesInstalled = SudoPrivilege.isInstalled()
         }
+    }
+
+    private var proxyHostBinding: Binding<String> {
+        Binding(
+            get: { app.settings.listenHost },
+            set: {
+                app.settings.listenHost = $0
+                app.saveSettings()
+            }
+        )
+    }
+
+    private var proxyPortBinding: Binding<String> {
+        Binding(
+            get: { String(app.settings.listenPort) },
+            set: {
+                let t = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let v = Int(t), v > 0, v <= 65_535 {
+                    app.settings.listenPort = v
+                    app.saveSettings()
+                }
+            }
+        )
     }
 
     private var header: some View {

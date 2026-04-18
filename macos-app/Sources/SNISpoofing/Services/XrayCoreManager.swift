@@ -13,19 +13,25 @@ final class XrayCoreManager {
 
     var isRunning: Bool { process?.isRunning == true }
 
-    func start(configURL: URL) throws {
+    func start(configURL: URL, runAsRoot: Bool) throws {
         stopSync()
         guard let binary = binaryURL, FileManager.default.isExecutableFile(atPath: binary.path) else {
             throw NSError(domain: "SNISpoofing", code: 10, userInfo: [NSLocalizedDescriptionKey: "xray not bundled — rebuild the app so Resources contains the xray binary."])
         }
+        guard let res = Bundle.main.resourceURL else {
+            throw NSError(domain: "SNISpoofing", code: 11, userInfo: [NSLocalizedDescriptionKey: "App resources not found."])
+        }
 
         let p = Process()
-        p.executableURL = binary
-        p.arguments = ["run", "-c", configURL.path]
-        if let res = Bundle.main.resourceURL,
-           FileManager.default.fileExists(atPath: res.appendingPathComponent("geoip.dat").path)
-        {
-            p.currentDirectoryURL = res
+        if runAsRoot {
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+            p.arguments = ["-n", SudoPrivilege.xrayWrapperPath, binary.path, configURL.path, res.path]
+        } else {
+            p.executableURL = binary
+            p.arguments = ["run", "-c", configURL.path]
+            if FileManager.default.fileExists(atPath: res.appendingPathComponent("geoip.dat").path) {
+                p.currentDirectoryURL = res
+            }
         }
 
         let out = Pipe()

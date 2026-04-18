@@ -70,12 +70,34 @@ enum XrayOutboundBuilder {
             ],
         ]
 
+        var inbounds: [[String: Any]] = [socksInbound]
+        if settings.useTunMode {
+            let tunName = settings.tunInterfaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !tunName.isEmpty else {
+                throw BuildError.unsupported("TUN: set a non-empty interface name (e.g. utun199).")
+            }
+            let mtu = max(576, min(settings.tunMTU, 9000))
+            inbounds.append([
+                "tag": "tun-in",
+                "port": 0,
+                "protocol": "tun",
+                "settings": [
+                    "name": tunName,
+                    "MTU": mtu,
+                ],
+            ])
+        }
+
+        var inboundTags = ["socks-in"]
+        if settings.useTunMode {
+            inboundTags.append("tun-in")
+        }
         let route: [String: Any] = [
             "domainStrategy": "AsIs",
             "rules": [
                 [
                     "type": "field",
-                    "inboundTag": ["socks-in"],
+                    "inboundTag": inboundTags,
                     "outboundTag": "proxy",
                 ],
             ],
@@ -83,7 +105,7 @@ enum XrayOutboundBuilder {
 
         let root: [String: Any] = [
             "log": ["loglevel": xrayLogLevel(settings.logLevel)],
-            "inbounds": [socksInbound],
+            "inbounds": inbounds,
             "outbounds": [
                 outbound,
                 [

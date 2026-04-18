@@ -55,6 +55,9 @@ final class PythonListener {
         p.standardError = out
 
         p.terminationHandler = { [weak self] _ in
+            if let proc = self?.process, proc.terminationStatus != 0 {
+                self?.emit("[listener exited with status \(proc.terminationStatus)]\n")
+            }
             out.fileHandleForReading.readabilityHandler = nil
             self?.process = nil
             self?.outputPipe = nil

@@ -10,8 +10,10 @@ struct AboutView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Cloak")
                             .font(.system(size: 28, weight: .bold, design: .rounded))
-                        Text("A simple VPN client.")
-                            .foregroundStyle(.secondary).font(.system(size: 13))
+                        Text("Cloak routes your traffic through a local SNI-spoofing bridge and Xray to stay connected on restrictive networks.")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 13))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                 }

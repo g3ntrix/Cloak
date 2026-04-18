@@ -1,8 +1,7 @@
 import Foundation
-import CFNetwork
 
-/// Public-IP lookup — either directly (no proxy, for showing the user's raw egress)
-/// or through the local mixed proxy (to show the proxied egress).
+/// Public-IP lookup — direct (no proxy) or through the local SOCKS5 (Xray).
+/// Proxied lookups use `curl --socks5-hostname` because `URLSession` SOCKS support is unreliable for HTTPS on macOS.
 enum EgressInfoService {
     struct Egress: Equatable {
         let ip: String
@@ -21,16 +20,18 @@ enum EgressInfoService {
         }
     }
 
-    /// ipinfo.io JSON (no API key for basic fields).
     private struct IPInfoPayload: Decodable {
         let ip: String
         let country: String?
     }
+    private struct IPApiPayload: Decodable {
+        let query: String
+        let countryCode: String?
+    }
 
-    /// Fetches the egress IP as seen through the local proxy.
+    /// Fetches the egress IP as seen through the local SOCKS proxy (`host` must be usable by curl — not `0.0.0.0`).
     static func fetchEgress(proxyHost: String, proxyPort: Int) async throws -> Egress {
-        let session = makeProxiedSession(host: proxyHost, port: proxyPort)
-        return try await fetch(using: session)
+        try await fetchThroughSocks5(proxyHost: proxyHost, proxyPort: proxyPort)
     }
 
     /// Fetches the machine's public IP directly (no proxy).
@@ -38,12 +39,12 @@ enum EgressInfoService {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10
         config.timeoutIntervalForResource = 12
-        return try await fetch(using: URLSession(configuration: config))
+        return try await fetchHTTPS(using: URLSession(configuration: config))
     }
 
-    // MARK: - shared
+    // MARK: - Direct HTTPS (URLSession)
 
-    private static func fetch(using session: URLSession) async throws -> Egress {
+    private static func fetchHTTPS(using session: URLSession) async throws -> Egress {
         let url = URL(string: "https://ipinfo.io/json")!
         let (data, response) = try await session.data(from: url)
         guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
@@ -54,19 +55,74 @@ enum EgressInfoService {
         return Egress(ip: payload.ip, country: payload.country)
     }
 
-    private static func makeProxiedSession(host: String, port: Int) -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 25
-        let portNum = NSNumber(value: port)
-        config.connectionProxyDictionary = [
-            kCFNetworkProxiesHTTPEnable as String: true,
-            kCFNetworkProxiesHTTPProxy as String: host,
-            kCFNetworkProxiesHTTPPort as String: portNum,
-            kCFNetworkProxiesHTTPSEnable as String: true,
-            kCFNetworkProxiesHTTPSProxy as String: host,
-            kCFNetworkProxiesHTTPSPort as String: portNum
+    // MARK: - Via SOCKS5 (curl)
+
+    private static func fetchThroughSocks5(proxyHost: String, proxyPort: Int) async throws -> Egress {
+        let socks = socks5Endpoint(host: proxyHost, port: proxyPort)
+        return try await Task.detached(priority: .utility) {
+            do {
+                let data = try runCurlJSON(
+                    socks: socks,
+                    url: "https://ipinfo.io/json"
+                )
+                let payload = try JSONDecoder().decode(IPInfoPayload.self, from: data)
+                guard !payload.ip.isEmpty else { throw EgressError.decode }
+                return Egress(ip: payload.ip, country: payload.country)
+            } catch {
+                // Fallback for environments where curl+LibreSSL fails TLS over SOCKS.
+                let data = try runCurlJSON(
+                    socks: socks,
+                    url: "http://ip-api.com/json"
+                )
+                let payload = try JSONDecoder().decode(IPApiPayload.self, from: data)
+                guard !payload.query.isEmpty else { throw EgressError.decode }
+                return Egress(ip: payload.query, country: payload.countryCode)
+            }
+        }.value
+    }
+
+    private static func runCurlJSON(socks: String, url: String) throws -> Data {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        p.arguments = [
+            "-sS", "--max-time", "25",
+            "--socks5-hostname", socks,
+            url,
         ]
-        return URLSession(configuration: config)
+        let out = Pipe()
+        let err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        try p.run()
+        p.waitUntilExit()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let errText = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard p.terminationStatus == 0, !data.isEmpty else {
+            let msg = errText.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw NSError(
+                domain: "SNISpoofing",
+                code: 40,
+                userInfo: [NSLocalizedDescriptionKey: msg.isEmpty ? "IP lookup through proxy failed (curl)." : msg]
+            )
+        }
+        return data
+    }
+
+    /// `host:port` or `[ipv6]:port` for curl `--socks5-hostname`.
+    private static func socks5Endpoint(host: String, port: Int) -> String {
+        let t = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.contains(":"), !isIPv4DottedDecimal(t) {
+            return "[\(t)]:\(port)"
+        }
+        return "\(t):\(port)"
+    }
+
+    private static func isIPv4DottedDecimal(_ s: String) -> Bool {
+        let p = s.split(separator: ".")
+        guard p.count == 4 else { return false }
+        return p.allSatisfy { oct in
+            guard let n = Int(oct), (0 ... 255).contains(n) else { return false }
+            return true
+        }
     }
 }

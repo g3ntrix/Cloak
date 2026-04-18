@@ -5,13 +5,14 @@ struct ContentView: View {
     @State private var tab: Tab = .dashboard
 
     enum Tab: String, CaseIterable, Identifiable {
-        case dashboard, profiles, settings, about
+        case dashboard, profiles, settings, logs, about
         var id: String { rawValue }
         var title: String {
             switch self {
             case .dashboard: return "Dashboard"
             case .profiles: return "Profiles"
             case .settings: return "Settings"
+            case .logs: return "Logs"
             case .about: return "About"
             }
         }
@@ -20,6 +21,7 @@ struct ContentView: View {
             case .dashboard: return "bolt.shield"
             case .profiles: return "person.crop.rectangle.stack"
             case .settings: return "slider.horizontal.3"
+            case .logs: return "doc.text"
             case .about: return "info.circle"
             }
         }
@@ -37,6 +39,7 @@ struct ContentView: View {
                     case .dashboard: DashboardView()
                     case .profiles: ProfilesView()
                     case .settings: SettingsView()
+                    case .logs: LogsView()
                     case .about: AboutView()
                     }
                 }

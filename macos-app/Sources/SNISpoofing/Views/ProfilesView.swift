@@ -28,7 +28,9 @@ struct ProfilesView: View {
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                     Spacer()
                     Button {
-                        Task { await pingAll() }
+                        Task { @MainActor in
+                            await pingAll()
+                        }
                     } label: {
                         if pinging.count == app.profiles.count && !app.profiles.isEmpty {
                             Label("Testing…", systemImage: "hourglass")
@@ -73,11 +75,11 @@ struct ProfilesView: View {
                                     isPinging: pinging.contains(p.id),
                                     onTap: { selection = p.id },
                                     onActivate: { app.setActive(p.id) },
-                                    onPing: { Task { await pingOne(p) } }
+                                    onPing: { Task { @MainActor in await pingOne(p) } }
                                 )
                                 .contextMenu {
                                     Button("Make Active") { app.setActive(p.id) }
-                                    Button("Ping") { Task { await pingOne(p) } }
+                                    Button("Ping") { Task { @MainActor in await pingOne(p) } }
                                     Divider()
                                     Button("Delete", role: .destructive) {
                                         pendingDelete = p.id
@@ -151,35 +153,41 @@ struct ProfilesView: View {
     }
 
     // MARK: - Ping actions
-
-    private func pingOne(_ p: Profile) async {
-        await MainActor.run { _ = pinging.insert(p.id) }
-        let port = UInt16(clamping: p.serverPort)
-        let r = await RealPingService.ping(host: p.server, port: port)
-        await MainActor.run {
-            pingResults[p.id] = r
-            pinging.remove(p.id)
+    /// Direct TCP connect RTT from this Mac to `server:serverPort` (internet path). Works while disconnected.
+    private static func directPing(for p: Profile) async -> RealPingService.Result {
+        let host = p.server.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            return RealPingService.Result(millis: nil, error: "no server")
         }
+        guard p.serverPort > 0, p.serverPort <= 65_535 else {
+            return RealPingService.Result(millis: nil, error: "bad port")
+        }
+        return await RealPingService.ping(host: host, port: UInt16(clamping: p.serverPort))
     }
 
+    @MainActor
+    private func pingOne(_ p: Profile) async {
+        _ = pinging.insert(p.id)
+        let r = await Self.directPing(for: p)
+        pingResults[p.id] = r
+        pinging.remove(p.id)
+    }
+
+    @MainActor
     private func pingAll() async {
         let toPing = app.profiles
-        await MainActor.run { pinging = Set(toPing.map(\.id)) }
+        guard !toPing.isEmpty else { return }
+        pinging = Set(toPing.map(\.id))
         await withTaskGroup(of: (UUID, RealPingService.Result).self) { group in
             for p in toPing {
                 group.addTask {
-                    let r = await RealPingService.ping(
-                        host: p.server,
-                        port: UInt16(clamping: p.serverPort)
-                    )
+                    let r = await Self.directPing(for: p)
                     return (p.id, r)
                 }
             }
             for await (id, r) in group {
-                await MainActor.run {
-                    pingResults[id] = r
-                    pinging.remove(id)
-                }
+                pingResults[id] = r
+                pinging.remove(id)
             }
         }
     }
@@ -212,7 +220,7 @@ private struct ProfileRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.name).font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
-                    Text("\(profile.server):\(profile.serverPort)")
+                    Text(verbatim: "\(profile.server):\(profile.serverPort)")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -297,7 +305,7 @@ private struct PingChip: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Test reachability of this profile's server")
+        .help("Direct TCP time from this Mac to the profile server:port (internet path; works before you connect).")
     }
 
     private func color(for ms: Int) -> Color {

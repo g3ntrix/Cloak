@@ -10,12 +10,33 @@ struct ListenerProjectConfig: Codable, Equatable {
 
     static let `default` = ListenerProjectConfig()
 
-    /// Pretty JSON for the editor.
+    /// Values used by **Restore default** in Settings (full example config).
+    static let factoryRestore = ListenerProjectConfig(
+        LISTEN_HOST: "127.0.0.1",
+        LISTEN_PORT: 40443,
+        CONNECT_IP: "104.19.229.21",
+        CONNECT_PORT: 443,
+        FAKE_SNI: "hcaptcha.com"
+    )
+
+    /// Pretty JSON for the editor (empty CONNECT/FAKE placeholders).
     static func defaultJSONString() -> String {
         do {
             let enc = JSONEncoder()
             enc.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try enc.encode(ListenerProjectConfig.default)
+            return String(data: data, encoding: .utf8) ?? "{}"
+        } catch {
+            return "{}"
+        }
+    }
+
+    /// JSON for **Restore default** (factory example).
+    static func factoryRestoreJSONString() -> String {
+        do {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try enc.encode(factoryRestore)
             return String(data: data, encoding: .utf8) ?? "{}"
         } catch {
             return "{}"

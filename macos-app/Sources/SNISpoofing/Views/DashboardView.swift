@@ -4,6 +4,7 @@ struct DashboardView: View {
     @EnvironmentObject var app: AppState
     @State private var uptime: String = "0s"
     @State private var timer: Timer?
+    @State private var lanIPv4: String?
 
     var body: some View {
         ScrollView {
@@ -18,7 +19,7 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Primary control card
+                // Primary control card (first)
                 Card {
                     HStack {
                         StatusOrb(status: app.status)
@@ -43,6 +44,33 @@ struct DashboardView: View {
                     }
                 }
 
+                Card {
+                    HStack(alignment: .top, spacing: 14) {
+                        Image(systemName: "network")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.cyan)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Local SOCKS proxy")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(verbatim: "\(app.settings.listenHost):\(app.settings.listenPort)")
+                                .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                                .textSelection(.enabled)
+                            if bindsAllInterfaces, let lan = lanIPv4 {
+                                Text(verbatim: "From another device on this network: \(lan):\(app.settings.listenPort)")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.cyan)
+                                    .textSelection(.enabled)
+                            }
+                            Text(proxyHint)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+
+                TunModeCard()
+
                 // Active profile (minimal — no technical fields)
                 if let p = app.activeProfile {
                     Card {
@@ -64,6 +92,9 @@ struct DashboardView: View {
                                     StatTile(icon: "clock", title: "Connected for", value: uptime, tint: .green)
                                     StatTile(icon: "arrow.down.circle", title: "Download", value: rate(app.downloadBytesPerSec), tint: .blue)
                                     StatTile(icon: "arrow.up.circle", title: "Upload", value: rate(app.uploadBytesPerSec), tint: .purple)
+                                    StatTile(icon: "arrow.down.to.line", title: "Session ↓", value: formatBytes(app.sessionBytesDown), tint: .cyan)
+                                    StatTile(icon: "arrow.up.to.line", title: "Session ↑", value: formatBytes(app.sessionBytesUp), tint: .orange)
+                                    StatTile(icon: "sum", title: "Session total", value: formatBytes(app.sessionBytesDown + app.sessionBytesUp), tint: .mint)
                                 }
                             }
                         }
@@ -155,14 +186,33 @@ struct DashboardView: View {
                 }
             }
         }
-        .onAppear { startTimer() }
+        .onAppear {
+            startTimer()
+            refreshLanIP()
+        }
+        .onChange(of: app.settings.listenHost) { _ in refreshLanIP() }
         .onDisappear { timer?.invalidate() }
+    }
+
+    private var bindsAllInterfaces: Bool {
+        let h = app.settings.listenHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return h == "0.0.0.0" || h == "*"
+    }
+
+    private func refreshLanIP() {
+        lanIPv4 = LanAddress.primaryIPv4String()
     }
 
     private var headline: String {
         app.status.isRunning
             ? "Your internet is protected."
             : "Click Start to connect."
+    }
+
+    private var proxyHint: String {
+        app.status.isRunning
+            ? "Apps using this proxy are routed through Cloak."
+            : "Configure your browser or system proxy to this address before you connect."
     }
 
     private var secondaryLabel: String {
@@ -196,6 +246,14 @@ struct DashboardView: View {
         if bits < 1_000_000 { return String(format: "%.1f Kbps", bits / 1_000) }
         if bits < 1_000_000_000 { return String(format: "%.1f Mbps", bits / 1_000_000) }
         return String(format: "%.2f Gbps", bits / 1_000_000_000)
+    }
+
+    private func formatBytes(_ n: UInt64) -> String {
+        let d = Double(n)
+        if d < 1_000 { return "\(n) B" }
+        if d < 1_000_000 { return String(format: "%.1f KB", d / 1_000) }
+        if d < 1_000_000_000 { return String(format: "%.2f MB", d / 1_000_000) }
+        return String(format: "%.2f GB", d / 1_000_000_000)
     }
 
     private func format(interval: TimeInterval) -> String {
