@@ -27,6 +27,12 @@ if [[ -f "$ROOT/logo/Cloak.png" ]]; then
   cp -f "$ROOT/logo/Cloak.png" "$ROOT/Sources/SNISpoofing/Resources/Cloak.png"
 fi
 
+# Regenerate the squircle .icns so Finder/Dock show proper rounded icon.
+if [[ -x "$ROOT/scripts/make-icns.sh" && -f "$ROOT/logo/Cloak.png" ]]; then
+  echo "→ rebuilding Cloak.icns (squircle)"
+  "$ROOT/scripts/make-icns.sh"
+fi
+
 echo "→ swift build (arm64)"
 swift build --package-path "$ROOT" -c release \
   --triple arm64-apple-macosx13.0 \
@@ -96,12 +102,32 @@ assemble_one() {
     cp -R "$b" "$APP/Contents/Resources/"
   done
 
+  # macOS reads the dock/Finder icon directly from Contents/Resources/Cloak.icns
+  # (via CFBundleIconFile). Keep a copy at the bundle root — not just in the
+  # SwiftPM resource sub-bundle.
   if [[ -f "$ROOT/Sources/SNISpoofing/Resources/Cloak.icns" ]]; then
     cp "$ROOT/Sources/SNISpoofing/Resources/Cloak.icns" "$APP/Contents/Resources/Cloak.icns"
   fi
   if [[ -f "$ROOT/Sources/SNISpoofing/Resources/Cloak.png" ]]; then
     cp "$ROOT/Sources/SNISpoofing/Resources/Cloak.png" "$APP/Contents/Resources/Cloak.png"
   fi
+
+  # Embed the SNI-spoofing Python source so the app is self-contained.
+  # Users no longer need to point at an external project folder.
+  PY_SRC="$APP/Contents/Resources/python"
+  mkdir -p "$PY_SRC"
+  for f in main.py fake_tcp.py injecter.py monitor_connection.py; do
+    [[ -f "$ROOT/../$f" ]] && cp "$ROOT/../$f" "$PY_SRC/$f"
+  done
+  if [[ -d "$ROOT/../utils" ]]; then
+    rm -rf "$PY_SRC/utils"
+    cp -R "$ROOT/../utils" "$PY_SRC/utils"
+    find "$PY_SRC/utils" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  fi
+  if [[ -f "$ROOT/../requirements.txt" ]]; then
+    cp "$ROOT/../requirements.txt" "$PY_SRC/requirements.txt"
+  fi
+
 
   cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -22,8 +22,10 @@ def get_exe_dir():
         return os.path.dirname(os.path.abspath(__file__))
 
 
-# Build the path to config.json
-config_path = os.path.join(get_exe_dir(), 'config.json')
+# Build the path to config.json. Allow override via env var so the macOS
+# app can keep the config in a writable location while main.py lives in a
+# read-only app bundle.
+config_path = os.environ.get('CLOAK_CONFIG') or os.path.join(get_exe_dir(), 'config.json')
 
 # Load the config
 with open(config_path, 'r') as f:

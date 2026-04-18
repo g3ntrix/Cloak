@@ -2,7 +2,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject var app: AppState
-    @State private var uptime: String = "–"
+    @State private var uptime: String = "0s"
     @State private var timer: Timer?
 
     var body: some View {
@@ -11,9 +11,9 @@ struct DashboardView: View {
 
                 // Headline
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("SNI spoof + Xray")
+                    Text("Cloak")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
-                    Text("Layer 1: Python listener. Layer 2: Xray → local port → SOCKS. Import any VLESS/Trojan URL in Profiles; dial is rewritten to your listener.")
+                    Text(headline)
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -43,38 +43,28 @@ struct DashboardView: View {
                     }
                 }
 
-                // Active profile
+                // Active profile (minimal — no technical fields)
                 if let p = app.activeProfile {
                     Card {
-                        VStack(alignment: .leading, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Label("Active profile", systemImage: "checkmark.seal.fill")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.green)
                                 Spacer()
-                                Text(p.kind.display)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .padding(.horizontal, 8).padding(.vertical, 3)
-                                    .background(Capsule().fill(.purple.opacity(0.2)))
-                                    .foregroundStyle(.purple)
                             }
                             Text(p.name)
                                 .font(.system(size: 18, weight: .bold))
                                 .lineLimit(1)
-                            LazyVGrid(columns: [.init(.flexible(), spacing: 14),
-                                                .init(.flexible(), spacing: 14)], spacing: 14) {
-                                InfoCard(icon: "link.circle", title: "Xray → listener",
-                                         value: "\(app.listenerProject.LISTEN_HOST):\(app.listenerProject.LISTEN_PORT)")
-                                InfoCard(icon: "arrow.up.right.circle", title: "URI server (info)",
-                                         value: "\(p.server):\(p.serverPort)")
-                                InfoCard(icon: "network", title: "Transport",
-                                         value: "\(p.transport.kind.display)\(p.transport.path.isEmpty ? "" : " \(p.transport.path)")")
-                                InfoCard(icon: "lock.shield", title: "Real SNI",
-                                         value: p.tls.serverName.isEmpty ? "(none)" : p.tls.serverName)
-                                InfoCard(icon: "theatermasks",
-                                         title: p.tls.enableSpoof ? "Spoof SNI" : "Spoof",
-                                         value: p.tls.enableSpoof ? p.tls.fakeSNI : "off",
-                                         accent: p.tls.enableSpoof ? .purple : .secondary)
+
+                            if app.status.isRunning {
+                                LazyVGrid(columns: [.init(.flexible(), spacing: 12),
+                                                    .init(.flexible(), spacing: 12),
+                                                    .init(.flexible(), spacing: 12)], spacing: 12) {
+                                    StatTile(icon: "clock", title: "Connected for", value: uptime, tint: .green)
+                                    StatTile(icon: "arrow.down.circle", title: "Download", value: rate(app.downloadBytesPerSec), tint: .blue)
+                                    StatTile(icon: "arrow.up.circle", title: "Upload", value: rate(app.uploadBytesPerSec), tint: .purple)
+                                }
                             }
                         }
                     }
@@ -84,14 +74,14 @@ struct DashboardView: View {
                             Label("No active profile", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.yellow)
                                 .font(.system(size: 13, weight: .semibold))
-                            Text("Open the Profiles tab and import your vless:// URL, then click the power button on the profile to make it active.")
+                            Text("Open the Profiles tab and import a profile to get started.")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
 
-                // Egress (via local proxy)
+                // Egress (shown only when connected)
                 if app.status.isRunning {
                     Card {
                         HStack(alignment: .top, spacing: 16) {
@@ -100,16 +90,14 @@ struct DashboardView: View {
                                 .foregroundStyle(.mint)
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
-                                    Text("Connection egress")
+                                    Text("Your IP (through VPN)")
                                         .font(.system(size: 12, weight: .semibold))
                                     Spacer()
-                                    Button {
-                                        app.refreshEgressNow()
-                                    } label: {
+                                    Button { app.refreshEgressNow() } label: {
                                         Image(systemName: "arrow.clockwise")
                                     }
                                     .buttonStyle(.borderless)
-                                    .help("Refresh IP / country")
+                                    .help("Refresh")
                                 }
                                 if let ip = app.egressIP {
                                     Text(ip)
@@ -120,73 +108,49 @@ struct DashboardView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                 } else if let msg = app.egressLookupMessage {
-                                    Text(msg)
-                                        .font(.system(size: 12))
+                                    Text(msg).font(.system(size: 12))
                                         .foregroundStyle(.secondary)
                                 } else {
-                                    Text("—")
-                                        .foregroundStyle(.secondary)
+                                    Text("—").foregroundStyle(.secondary)
                                 }
                             }
                             Spacer(minLength: 0)
                         }
                     }
-                }
-
-                // Current public IP card — shows the user's raw egress (bypassing Cloak).
-                Card {
-                    HStack(alignment: .top, spacing: 16) {
-                        Image(systemName: "wifi")
-                            .font(.system(size: 22))
-                            .foregroundStyle(.blue)
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Current public IP")
-                                    .font(.system(size: 12, weight: .semibold))
-                                Spacer()
-                                Button { app.refreshDirectIP() } label: {
-                                    Image(systemName: "arrow.clockwise")
+                } else {
+                    Card {
+                        HStack(alignment: .top, spacing: 16) {
+                            Image(systemName: "wifi")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.blue)
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Your public IP")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Spacer()
+                                    Button { app.refreshDirectIP() } label: {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Refresh")
                                 }
-                                .buttonStyle(.borderless)
-                                .help("Refresh current IP")
-                            }
-                            if let ip = app.directIP {
-                                Text(verbatim: ip)
-                                    .font(.system(size: 17, weight: .semibold, design: .monospaced))
-                                if let cc = app.directCountry, !cc.isEmpty {
-                                    Text(countryLine(code: cc))
-                                        .font(.system(size: 13))
+                                if let ip = app.directIP {
+                                    Text(verbatim: ip)
+                                        .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                                    if let cc = app.directCountry, !cc.isEmpty {
+                                        Text(countryLine(code: cc))
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                } else if let msg = app.directLookupMessage {
+                                    Text(msg).font(.system(size: 12))
                                         .foregroundStyle(.secondary)
+                                } else {
+                                    Text(verbatim: "—").foregroundStyle(.secondary)
                                 }
-                            } else if let msg = app.directLookupMessage {
-                                Text(msg).font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text(verbatim: "—").foregroundStyle(.secondary)
                             }
+                            Spacer(minLength: 0)
                         }
-                        Spacer(minLength: 0)
-                    }
-                }
-
-                // Listener card — where to point the browser/app (proxy mode only).
-                Card {
-                    HStack(spacing: 16) {
-                        Image(systemName: "arrow.down.forward.circle")
-                            .font(.system(size: 22))
-                            .foregroundStyle(.cyan)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Point your client at (Xray SOCKS)")
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
-                            Text(verbatim: "\(app.settings.listenHost):\(app.settings.listenPort)")
-                                .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                        }
-                        Spacer()
-                        Text(verbatim: "SOCKS5")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Capsule().fill(.white.opacity(0.08)))
                     }
                 }
             }
@@ -195,12 +159,18 @@ struct DashboardView: View {
         .onDisappear { timer?.invalidate() }
     }
 
+    private var headline: String {
+        app.status.isRunning
+            ? "Your internet is protected."
+            : "Click Start to connect."
+    }
+
     private var secondaryLabel: String {
         if case .running = app.status, let started = app.startedAt {
-            return "Up \(format(interval: Date().timeIntervalSince(started)))"
+            return "Up for \(format(interval: Date().timeIntervalSince(started)))"
         }
-        if app.activeProfile == nil { return "Select a profile to start." }
-        return "Needs sudo password in Settings (listener) and a VLESS/Trojan profile."
+        if app.activeProfile == nil { return "Import a profile in the Profiles tab to get started." }
+        return "Ready to connect."
     }
 
     private func startTimer() {
@@ -217,8 +187,15 @@ struct DashboardView: View {
     private func countryLine(code: String) -> String {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count == 2 else { return trimmed }
-        let upper = trimmed.uppercased()
-        return "Country: \(upper)"
+        return "Country: \(trimmed.uppercased())"
+    }
+
+    private func rate(_ bytesPerSec: Double) -> String {
+        let bits = bytesPerSec * 8
+        if bits < 1_000 { return String(format: "%.0f bps", bits) }
+        if bits < 1_000_000 { return String(format: "%.1f Kbps", bits / 1_000) }
+        if bits < 1_000_000_000 { return String(format: "%.1f Mbps", bits / 1_000_000) }
+        return String(format: "%.2f Gbps", bits / 1_000_000_000)
     }
 
     private func format(interval: TimeInterval) -> String {
@@ -249,29 +226,27 @@ struct Card<Content: View>: View {
     }
 }
 
-struct InfoCard: View {
+private struct StatTile: View {
     let icon: String
     let title: String
     let value: String
-    var accent: Color = .accentColor
+    let tint: Color
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(accent)
-                .frame(width: 34, height: 34)
-                .background(accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text(value).font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .lineLimit(1).truncationMode(.middle)
-            }
-            Spacer()
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.03))
+            RoundedRectangle(cornerRadius: 10)
+                .fill(.white.opacity(0.03))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.06)))
         )
     }

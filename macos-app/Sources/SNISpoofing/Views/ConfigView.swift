@@ -2,93 +2,104 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
-    @State private var draft: AppSettings = .default
     @State private var listenerDraft: String = ListenerProjectConfig.defaultJSONString()
     @State private var jsonError: String?
     @State private var saved = false
+    @State private var privilegeError: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
 
+                // Cloudflare config editor — the only thing end users should touch.
                 Card {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Layer 1 — Python listener (`main.py`)")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("On Start we write this JSON to `<project>/config.json` and run `sudo .venv/bin/python main.py`. Dial targets here are for the Python bypass, not for Xray.")
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Cloudflare config")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Button("Restore default") {
+                                listenerDraft = ListenerProjectConfig.defaultJSONString()
+                                jsonError = nil
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        Text("Paste your Cloudflare settings here. Save when you're done.")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
-
-                        LabeledField(
-                            title: "Project path",
-                            hint: "Folder that contains main.py and .venv.",
-                            text: Binding(
-                                get: { draft.pythonProjectPath ?? "" },
-                                set: { draft.pythonProjectPath = $0.isEmpty ? nil : $0 }
-                            )
-                        )
-
-                        SecureField("macOS password (sudo)", text: $app.sudoPassword)
-                            .textFieldStyle(.roundedBorder)
-
-                        Text("config.json fields")
-                            .font(.system(size: 11, weight: .semibold))
-                            .padding(.top, 4)
                         TextEditor(text: $listenerDraft)
-                            .font(.system(size: 11, design: .monospaced))
-                            .frame(minHeight: 160, maxHeight: 280)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(minHeight: 180, maxHeight: 320)
                             .padding(8)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.25)))
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(.black.opacity(0.25))
+                                    .overlay(RoundedRectangle(cornerRadius: 8)
+                                        .stroke(.white.opacity(0.08), lineWidth: 1))
+                            )
                         if let e = jsonError {
                             Text(e).font(.caption).foregroundStyle(.red)
                         }
                     }
                 }
 
+                // Admin-permission helper.
                 Card {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Layer 2 — Xray local SOCKS")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("VLESS/Trojan share links in Profiles are rewritten to dial LISTEN_HOST:LISTEN_PORT from the JSON above, then exposed here as SOCKS.")
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Admin permission")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            if app.privilegesInstalled {
+                                Label("Granted", systemImage: "checkmark.shield.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.green)
+                            }
+                        }
+                        Text(app.privilegesInstalled
+                             ? "Cloak has one-time admin permission. Connect without typing your password."
+                             : "Cloak needs admin rights once so it can start the VPN without a password each time.")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
-
-                        LabeledField(title: "SOCKS host", hint: "Usually 127.0.0.1",
-                                     text: $draft.listenHost)
-                        LabeledField(title: "SOCKS port", hint: "What your apps connect to.",
-                                     text: Binding(
-                                        get: { String(draft.listenPort) },
-                                        set: { draft.listenPort = Int($0.filter { $0.isNumber }) ?? draft.listenPort }
-                                     ))
-                    }
-                }
-
-            Card {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Log level").font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text("Verbosity for Xray + listener logs in the Logs tab.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary.opacity(0.8))
-                    }
-                    Spacer()
-                    Picker("", selection: $draft.logLevel) {
-                        ForEach(AppSettings.LogLevel.allCases) { l in
-                            Text(l.rawValue).tag(l)
+                        HStack {
+                            if app.privilegesInstalled {
+                                Button("Remove permission") {
+                                    do {
+                                        try SudoPrivilege.uninstall()
+                                        app.privilegesInstalled = SudoPrivilege.isInstalled()
+                                    } catch {
+                                        privilegeError = error.localizedDescription
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            } else {
+                                Button("Grant permission…") {
+                                    do {
+                                        try SudoPrivilege.install()
+                                        app.privilegesInstalled = true
+                                        privilegeError = nil
+                                    } catch {
+                                        privilegeError = error.localizedDescription
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            if let e = privilegeError {
+                                Text(e).font(.caption).foregroundStyle(.red)
+                                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
-                    .labelsHidden()
-                    .frame(width: 200)
                 }
-            }
 
                 saveBar
             }
         }
         .onAppear {
-            draft = app.settings
             listenerDraft = (try? app.listenerProject.encodeJSONString()) ?? ListenerProjectConfig.defaultJSONString()
+            app.privilegesInstalled = SudoPrivilege.isInstalled()
         }
     }
 
@@ -96,7 +107,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Settings")
                 .font(.system(size: 22, weight: .bold, design: .rounded))
-            Text("Layer 1 = SNI-Spoofing Python. Layer 2 = Xray outbound → local listener, SOCKS inbound.")
+            Text("Paste your Cloudflare config and grant admin permission once.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }
@@ -111,7 +122,6 @@ struct SettingsView: View {
             }
             Spacer()
             Button("Revert") {
-                draft = app.settings
                 listenerDraft = (try? app.listenerProject.encodeJSONString()) ?? ListenerProjectConfig.defaultJSONString()
                 jsonError = nil
             }
@@ -120,9 +130,7 @@ struct SettingsView: View {
                 jsonError = nil
                 do {
                     let parsed = try ListenerProjectConfig.decode(from: listenerDraft)
-                    app.settings = draft
                     app.listenerProject = parsed
-                    app.saveSettings()
                     app.saveListenerProject()
                     withAnimation { saved = true }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -133,7 +141,6 @@ struct SettingsView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(false)
         }
     }
 }

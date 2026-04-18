@@ -8,19 +8,14 @@ struct Sidebar: View {
         VStack(spacing: 0) {
             // App header
             HStack(spacing: 10) {
-                CloakBrandImage(size: 36, cornerRadius: 10)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Cloak")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Python + Xray")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+                CloakBrandImage(size: 30, cornerRadius: 8)
+                Text("Cloak")
+                    .font(.system(size: 15, weight: .semibold))
                 Spacer()
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 16)
+            .padding(.top, 28)
+            .padding(.bottom, 14)
 
             // Nav
             VStack(spacing: 2) {

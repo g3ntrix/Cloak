@@ -5,6 +5,19 @@ struct ProfilesView: View {
     @State private var selection: UUID?
     @State private var showImport = false
     @State private var pendingDelete: UUID?
+    @State private var pingResults: [UUID: RealPingService.Result] = [:]
+    @State private var pinging: Set<UUID> = []
+    @State private var sortByPing = false
+
+    private var orderedProfiles: [Profile] {
+        guard sortByPing else { return app.profiles }
+        return app.profiles.sorted { a, b in
+            let ra = pingResults[a.id]?.millis ?? Int.max
+            let rb = pingResults[b.id]?.millis ?? Int.max
+            if ra == rb { return a.name.localizedCompare(b.name) == .orderedAscending }
+            return ra < rb
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -15,12 +28,35 @@ struct ProfilesView: View {
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                     Spacer()
                     Button {
+                        Task { await pingAll() }
+                    } label: {
+                        if pinging.count == app.profiles.count && !app.profiles.isEmpty {
+                            Label("Testing…", systemImage: "hourglass")
+                        } else {
+                            Label("Ping all", systemImage: "antenna.radiowaves.left.and.right")
+                        }
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .disabled(app.profiles.isEmpty || !pinging.isEmpty)
+
+                    Button {
                         showImport = true
                     } label: {
-                        Label("Import URL", systemImage: "link")
+                        Label("Import", systemImage: "link")
                     }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
+                }
+
+                if !app.profiles.isEmpty {
+                    HStack {
+                        Toggle("Sort by ping", isOn: $sortByPing)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .font(.system(size: 11))
+                        Spacer()
+                    }
                 }
 
                 if app.profiles.isEmpty {
@@ -28,16 +64,20 @@ struct ProfilesView: View {
                 } else {
                     ScrollView {
                         VStack(spacing: 6) {
-                            ForEach(app.profiles) { p in
+                            ForEach(orderedProfiles) { p in
                                 ProfileRow(
                                     profile: p,
                                     isActive: app.settings.activeProfileID == p.id,
                                     isSelected: selection == p.id,
+                                    pingResult: pingResults[p.id],
+                                    isPinging: pinging.contains(p.id),
                                     onTap: { selection = p.id },
-                                    onActivate: { app.setActive(p.id) }
+                                    onActivate: { app.setActive(p.id) },
+                                    onPing: { Task { await pingOne(p) } }
                                 )
                                 .contextMenu {
                                     Button("Make Active") { app.setActive(p.id) }
+                                    Button("Ping") { Task { await pingOne(p) } }
                                     Divider()
                                     Button("Delete", role: .destructive) {
                                         pendingDelete = p.id
@@ -65,7 +105,7 @@ struct ProfilesView: View {
                     EmptyEditor(onImport: { showImport = true })
                 }
             }
-            .frame(minWidth: 420, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+            .frame(minWidth: 460, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
             .layoutPriority(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -109,6 +149,40 @@ struct ProfilesView: View {
             }
         )
     }
+
+    // MARK: - Ping actions
+
+    private func pingOne(_ p: Profile) async {
+        await MainActor.run { _ = pinging.insert(p.id) }
+        let port = UInt16(clamping: p.serverPort)
+        let r = await RealPingService.ping(host: p.server, port: port)
+        await MainActor.run {
+            pingResults[p.id] = r
+            pinging.remove(p.id)
+        }
+    }
+
+    private func pingAll() async {
+        let toPing = app.profiles
+        await MainActor.run { pinging = Set(toPing.map(\.id)) }
+        await withTaskGroup(of: (UUID, RealPingService.Result).self) { group in
+            for p in toPing {
+                group.addTask {
+                    let r = await RealPingService.ping(
+                        host: p.server,
+                        port: UInt16(clamping: p.serverPort)
+                    )
+                    return (p.id, r)
+                }
+            }
+            for await (id, r) in group {
+                await MainActor.run {
+                    pingResults[id] = r
+                    pinging.remove(id)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - List row
@@ -117,8 +191,11 @@ private struct ProfileRow: View {
     let profile: Profile
     let isActive: Bool
     let isSelected: Bool
+    let pingResult: RealPingService.Result?
+    let isPinging: Bool
     let onTap: () -> Void
     let onActivate: () -> Void
+    let onPing: () -> Void
     @State private var hover = false
 
     var body: some View {
@@ -135,12 +212,13 @@ private struct ProfileRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.name).font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
-                    Text("\(profile.kind.display) · \(profile.server):\(profile.serverPort)")
+                    Text("\(profile.server):\(profile.serverPort)")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
+                PingChip(result: pingResult, isLoading: isPinging, onTap: onPing)
                 if isActive {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
@@ -184,6 +262,53 @@ private struct ProfileRow: View {
     }
 }
 
+private struct PingChip: View {
+    let result: RealPingService.Result?
+    let isLoading: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Group {
+                if isLoading {
+                    ProgressView().controlSize(.mini)
+                } else if let ms = result?.millis {
+                    Text("\(ms) ms")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(color(for: ms))
+                } else if let err = result?.error {
+                    Text(err)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                } else {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(minWidth: 38)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.white.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.08)))
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Test reachability of this profile's server")
+    }
+
+    private func color(for ms: Int) -> Color {
+        switch ms {
+        case 0 ..< 120: return .green
+        case 120 ..< 300: return .yellow
+        default: return .orange
+        }
+    }
+}
+
 // MARK: - Empty states
 
 private struct EmptyState: View {
@@ -193,9 +318,9 @@ private struct EmptyState: View {
             Image(systemName: "tray").font(.system(size: 26)).foregroundStyle(.secondary)
             Text("No profiles yet")
                 .font(.system(size: 13, weight: .medium))
-            Text("Paste a vless:// or trojan:// share URL to import.")
+            Text("Paste your profile link to add it.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
-            Button("Import URL") { onImport() }
+            Button("Import") { onImport() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .padding(.top, 4)
@@ -218,9 +343,9 @@ private struct EmptyEditor: View {
                 .foregroundStyle(.secondary)
             Text("Select or import a profile")
                 .font(.system(size: 15, weight: .semibold))
-            Text("Configs for VLESS, VMess, Trojan, or Shadowsocks.")
+            Text("Paste a link to add your first one.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
-            Button("Import URL") { onImport() }.buttonStyle(.borderedProminent)
+            Button("Import") { onImport() }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
@@ -244,9 +369,8 @@ private struct ImportSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Import profile")
                 .font(.system(size: 15, weight: .semibold))
-            Text("Paste a vless:// or trojan:// line. Optional: add a JSON block with the same keys as main.py config (CONNECT_IP, CONNECT_PORT, FAKE_SNI) to tune the Python layer. Xray always rewrites the outbound dial to LISTEN_HOST:LISTEN_PORT from Settings.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text("Paste your profile link below.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
             TextEditor(text: $text)
                 .font(.system(size: 12, design: .monospaced))
                 .frame(height: 180)
@@ -317,13 +441,6 @@ private struct ProfileEditor: View {
                 // Server
                 Card {
                     VStack(spacing: 14) {
-                        if isLoopback(profile.server) {
-                            Label("URI points at localhost — OK. Layer 2 (Xray) dials LISTEN_HOST:LISTEN_PORT from Settings → listener JSON.",
-                                  systemImage: "info.circle.fill")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.cyan)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
                         HStack {
                             Text("Type").font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
@@ -394,9 +511,8 @@ private struct ProfileEditor: View {
                             Toggle(isOn: $profile.tls.enableSpoof) {
                                 VStack(alignment: .leading) {
                                     Text("SNI Spoof").font(.system(size: 13, weight: .semibold))
-                                    Text("Prepends a forged ClientHello with a fake SNI before the real TLS handshake. Requires admin on macOS.")
+                                    Text("Disguises the handshake with a fake hostname.")
                                         .font(.system(size: 10)).foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                             if profile.tls.enableSpoof {

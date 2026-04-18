@@ -1,6 +1,8 @@
 import Foundation
 
-/// Runs `sudo -S .venv/bin/python main.py` in the SNI-Spoofing project directory after writing `config.json`.
+/// Runs the SNI-spoofing listener. On first start the app installs
+/// `/usr/local/bin/cloak-listener` + a NOPASSWD sudoers rule (see
+/// `SudoPrivilege`), so here we just invoke `sudo -n /usr/local/bin/cloak-listener`.
 final class PythonListener {
     var onLog: ((LogLine) -> Void)?
 
@@ -11,64 +13,54 @@ final class PythonListener {
         process?.isRunning == true
     }
 
-    func start(projectDirectory: URL, password: String, config: ListenerProjectConfig) throws {
+    func start(projectDirectory: URL, config: ListenerProjectConfig) throws {
         stop()
 
         let fm = FileManager.default
         guard fm.fileExists(atPath: projectDirectory.path) else {
-            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Project folder not found."])
-        }
-        let py = projectDirectory.appendingPathComponent(".venv/bin/python")
-        guard fm.isExecutableFile(atPath: py.path) else {
-            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Missing .venv/bin/python — create the venv in the SNI-Spoofing project first."])
+            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Internal error: Python listener source not found. Reinstall the app."])
         }
         let mainPy = projectDirectory.appendingPathComponent("main.py")
         guard fm.fileExists(atPath: mainPy.path) else {
-            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "main.py not found in project folder."])
+            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Internal error: main.py missing. Reinstall the app."])
         }
 
-        guard !password.isEmpty else {
-            throw NSError(domain: "SNISpoofing", code: 3, userInfo: [NSLocalizedDescriptionKey: "Enter your macOS password (sudo) to run the listener."])
-        }
-
+        // Write config.json next to main.py so the listener can read it.
         var cfg = config
         cfg.CONNECT_IP = config.CONNECT_IP.trimmingCharacters(in: .whitespacesAndNewlines)
         cfg.FAKE_SNI = config.FAKE_SNI.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cfg.CONNECT_IP.isEmpty, !cfg.FAKE_SNI.isEmpty else {
-            throw NSError(domain: "SNISpoofing", code: 4, userInfo: [NSLocalizedDescriptionKey: "Set CONNECT_IP and FAKE_SNI in the listener config (Settings → JSON)."])
+            throw NSError(domain: "SNISpoofing", code: 4, userInfo: [NSLocalizedDescriptionKey: "Paste your Cloudflare config in the Settings tab first (CONNECT_IP and FAKE_SNI can't be empty)."])
         }
 
-        let cfgURL = projectDirectory.appendingPathComponent("config.json")
+        // Always write config to the shared writable path the sudoers wrapper
+        // passes via CLOAK_CONFIG. This is required when the Python source
+        // lives inside the read-only app bundle.
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try enc.encode(cfg)
-        try data.write(to: cfgURL, options: .atomic)
-        emit("Wrote config.json → \(cfgURL.path)")
+        let cfgPath = SudoPrivilege.appSupportListenerConfigPath()
+        try data.write(to: URL(fileURLWithPath: cfgPath), options: .atomic)
+
+        guard fm.isExecutableFile(atPath: SudoPrivilege.wrapperPath) else {
+            throw NSError(domain: "SNISpoofing", code: 3, userInfo: [NSLocalizedDescriptionKey: "Background helper not installed. Approve the admin prompt when you press Start."])
+        }
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        p.arguments = ["-S", ".venv/bin/python", "main.py"]
-        p.currentDirectoryURL = projectDirectory
+        p.arguments = ["-n", SudoPrivilege.wrapperPath]
 
         let out = Pipe()
         p.standardOutput = out
         p.standardError = out
-        let inPipe = Pipe()
-        p.standardInput = inPipe
 
-        p.terminationHandler = { [weak self] proc in
+        p.terminationHandler = { [weak self] _ in
             out.fileHandleForReading.readabilityHandler = nil
             self?.process = nil
             self?.outputPipe = nil
-            self?.emit("[listener exited with status \(proc.terminationStatus)]")
         }
 
         try p.run()
-        if let d = (password + "\n").data(using: .utf8) {
-            inPipe.fileHandleForWriting.write(d)
-        }
-        inPipe.fileHandleForWriting.closeFile()
-
         process = p
         outputPipe = out
 

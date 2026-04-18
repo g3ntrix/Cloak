@@ -5,14 +5,13 @@ struct ContentView: View {
     @State private var tab: Tab = .dashboard
 
     enum Tab: String, CaseIterable, Identifiable {
-        case dashboard, profiles, settings, logs, about
+        case dashboard, profiles, settings, about
         var id: String { rawValue }
         var title: String {
             switch self {
             case .dashboard: return "Dashboard"
             case .profiles: return "Profiles"
             case .settings: return "Settings"
-            case .logs: return "Logs"
             case .about: return "About"
             }
         }
@@ -21,36 +20,29 @@ struct ContentView: View {
             case .dashboard: return "bolt.shield"
             case .profiles: return "person.crop.rectangle.stack"
             case .settings: return "slider.horizontal.3"
-            case .logs: return "text.alignleft"
             case .about: return "info.circle"
             }
         }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            WindowDragStrip()
-                .frame(height: 28)
-                .frame(maxWidth: .infinity)
-            NavigationSplitView {
-                Sidebar(tab: $tab)
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
-            } detail: {
-                ZStack {
-                    BackgroundGradient()
-                    Group {
-                        switch tab {
-                        case .dashboard: DashboardView()
-                        case .profiles: ProfilesView()
-                        case .settings: SettingsView()
-                        case .logs: LogsView()
-                        case .about: AboutView()
-                        }
+        NavigationSplitView {
+            Sidebar(tab: $tab)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+        } detail: {
+            ZStack {
+                BackgroundGradient()
+                Group {
+                    switch tab {
+                    case .dashboard: DashboardView()
+                    case .profiles: ProfilesView()
+                    case .settings: SettingsView()
+                    case .about: AboutView()
                     }
-                    .padding(24)
                 }
-                .navigationTitle(tab.title)
+                .padding(24)
             }
+            .navigationTitle(tab.title)
         }
         .background(WindowAccessor())
     }
@@ -69,7 +61,8 @@ struct BackgroundGradient: View {
     }
 }
 
-/// Makes the window use the vibrant titlebar blur on modern macOS.
+/// Configures the window for a standard-height hidden-title bar (traffic lights
+/// float over the content, no extra drag strip).
 struct WindowAccessor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
@@ -77,8 +70,7 @@ struct WindowAccessor: NSViewRepresentable {
             if let w = v.window {
                 w.titlebarAppearsTransparent = true
                 w.titleVisibility = .hidden
-                // Drag only via `WindowDragStrip` — not the whole content view.
-                w.isMovableByWindowBackground = false
+                w.isMovableByWindowBackground = true
                 w.styleMask.insert(.fullSizeContentView)
             }
         }

@@ -21,10 +21,10 @@ final class AppState: ObservableObject {
         }
         var label: String {
             switch self {
-            case .stopped: return "Stopped"
-            case .starting: return "Starting…"
-            case .running: return "Running"
-            case .stopping: return "Stopping…"
+            case .stopped: return "Disconnected"
+            case .starting: return "Connecting…"
+            case .running: return "Connected"
+            case .stopping: return "Disconnecting…"
             case .error(let msg): return "Error: \(msg)"
             }
         }
@@ -34,12 +34,16 @@ final class AppState: ObservableObject {
     @Published var profiles: [Profile]
     /// Written to `<pythonProjectPath>/config.json` on Start.
     @Published var listenerProject: ListenerProjectConfig
-    /// macOS login password for `sudo` (never persisted).
-    @Published var sudoPassword: String = ""
+    /// Whether the one-time admin escalation has installed a sudoers rule.
+    @Published var privilegesInstalled: Bool = SudoPrivilege.isInstalled()
 
     @Published var status: Status = .stopped
     @Published var logs: [LogLine] = []
     @Published var startedAt: Date?
+
+    /// Measured bytes/second through the local SOCKS (updated ~1Hz while running).
+    @Published var downloadBytesPerSec: Double = 0
+    @Published var uploadBytesPerSec: Double = 0
 
     @Published var egressIP: String?
     @Published var egressCountry: String?
@@ -59,14 +63,10 @@ final class AppState: ObservableObject {
         self.listenerProject = store.loadListenerProjectConfig() ?? .default
 
         python.onLog = { [weak self] line in
-            Task { @MainActor in
-                self?.appendLog(line, prefix: "[L1] ")
-            }
+            Task { @MainActor in self?.appendLog(line, prefix: "") }
         }
         xray.onLog = { [weak self] line in
-            Task { @MainActor in
-                self?.appendLog(line, prefix: "[L2] ")
-            }
+            Task { @MainActor in self?.appendLog(line, prefix: "") }
         }
 
         Task { [weak self] in await self?.runDirectIPLookup() }
@@ -143,7 +143,7 @@ final class AppState: ObservableObject {
         saveListenerProject()
 
         guard let profile = activeProfile else {
-            status = .error("No profile selected — add one in Profiles.")
+            status = .error("No profile selected — import one in Profiles.")
             return
         }
 
@@ -151,28 +151,32 @@ final class AppState: ObservableObject {
         case .vless, .trojan:
             break
         case .vmess, .shadowsocks:
-            status = .error("Use a VLESS or Trojan profile for this stack.")
+            status = .error("This profile type isn't supported yet — use a VLESS or Trojan config.")
             return
+        }
+
+        // Make sure the one-time admin grant is in place. If not, prompt for it now.
+        if !SudoPrivilege.isInstalled() {
+            do {
+                try SudoPrivilege.install()
+                privilegesInstalled = true
+            } catch {
+                status = .error(error.localizedDescription)
+                return
+            }
         }
 
         let projectURL = URL(fileURLWithPath: settings.resolvedPythonProjectPath, isDirectory: true)
 
-        if settings.mode == .proxy {
-            let want = settings.listenPort
-            let free = PortAvailability.firstAvailable(
-                preferred: want,
-                host: settings.listenHost,
-                range: 2079 ... 21_999
-            )
-            if free != want {
-                logs.append(LogLine(
-                    timestamp: Date(),
-                    stream: .system,
-                    text: "Port \(want) busy — using \(free) for local SOCKS (Xray)."
-                ))
-                settings.listenPort = free
-                saveSettings()
-            }
+        let want = settings.listenPort
+        let free = PortAvailability.firstAvailable(
+            preferred: want,
+            host: settings.listenHost,
+            range: 2079 ... 21_999
+        )
+        if free != want {
+            settings.listenPort = free
+            saveSettings()
         }
 
         status = .starting
@@ -180,7 +184,6 @@ final class AppState: ObservableObject {
         do {
             try python.start(
                 projectDirectory: projectURL,
-                password: sudoPassword,
                 config: listenerProject
             )
 
@@ -193,17 +196,12 @@ final class AppState: ObservableObject {
             )
             let cfgURL = try store.writeGeneratedXrayConfig(xdata)
 
-            logs.append(LogLine(
-                timestamp: Date(),
-                stream: .system,
-                text: "Xray dials \(listenerProject.LISTEN_HOST):\(listenerProject.LISTEN_PORT) (from listener config). SOCKS at \(settings.listenHost):\(settings.listenPort)."
-            ))
-
             try xray.start(configURL: cfgURL)
 
             startedAt = Date()
             status = .running
             scheduleEgressRefresh()
+            startBandwidthSampler()
         } catch {
             await stopInternal()
             status = .error(error.localizedDescription)
@@ -217,12 +215,53 @@ final class AppState: ObservableObject {
         await stopInternal()
         startedAt = nil
         clearEgress()
+        downloadBytesPerSec = 0
+        uploadBytesPerSec = 0
+        bandwidthTimer?.invalidate()
+        bandwidthTimer = nil
         status = .stopped
     }
 
     private func stopInternal() async {
         await xray.stop()
         python.stop()
+    }
+
+    // MARK: - Bandwidth sampler
+
+    private var bandwidthTimer: Timer?
+    private var lastBytesIn: UInt64 = 0
+    private var lastBytesOut: UInt64 = 0
+    private var lastSampleAt: Date?
+
+    private func startBandwidthSampler() {
+        bandwidthTimer?.invalidate()
+        lastBytesIn = 0
+        lastBytesOut = 0
+        lastSampleAt = nil
+        bandwidthTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sampleBandwidth() }
+        }
+    }
+
+    private func sampleBandwidth() {
+        guard status.isRunning else { return }
+        // We sample the total bytes in/out of our Swift process as a proxy for
+        // traffic through the local SOCKS — Xray is a child so its throughput
+        // rolls up. Good enough for a "speed" display; exact per-flow stats
+        // would require enabling Xray's Stats API.
+        guard let counters = NetworkCounters.totalRXTXBytes() else { return }
+        let now = Date()
+        if let last = lastSampleAt {
+            let dt = max(0.2, now.timeIntervalSince(last))
+            let dIn = counters.rx > lastBytesIn ? Double(counters.rx - lastBytesIn) : 0
+            let dOut = counters.tx > lastBytesOut ? Double(counters.tx - lastBytesOut) : 0
+            downloadBytesPerSec = dIn / dt
+            uploadBytesPerSec = dOut / dt
+        }
+        lastBytesIn = counters.rx
+        lastBytesOut = counters.tx
+        lastSampleAt = now
     }
 
     func clearLogs() { logs.removeAll() }
