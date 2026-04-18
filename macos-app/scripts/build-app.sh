@@ -128,6 +128,19 @@ assemble_one() {
     cp "$ROOT/../requirements.txt" "$PY_SRC/requirements.txt"
   fi
 
+  # Bundle scapy wheel from macos-app/assets (offline release builds — no pip at build time).
+  WHEELHOUSE_ASSETS="$ROOT/assets"
+  WHEELHOUSE_DST="$PY_SRC/wheelhouse"
+  rm -rf "$WHEELHOUSE_DST"
+  mkdir -p "$WHEELHOUSE_DST"
+  if compgen -G "$WHEELHOUSE_ASSETS/scapy-*.whl" >/dev/null; then
+    cp "$WHEELHOUSE_ASSETS"/scapy-*.whl "$WHEELHOUSE_DST/"
+  else
+    echo "error: missing scapy wheel in $WHEELHOUSE_ASSETS/scapy-*.whl" >&2
+    echo "Run: ./macos-app/scripts/fetch-release-assets.sh" >&2
+    exit 1
+  fi
+
 
   cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Release build for GitHub: universal Cloak.app + versioned DMG.
 #
+# Prereq (offline inputs): put Xray zips + scapy wheel under macos-app/assets/, or run:
+#   ./macos-app/scripts/fetch-release-assets.sh
+#
 # Usage:
 #   VERSION=1.0.0 ./scripts/build-release.sh
 #

@@ -1,4 +1,6 @@
-Place official GitHub release zips here (same names as upstream) to build **without** downloading:
+Release builds look for zips in **`macos-app/assets/`** first (see `macos-app/assets/README.md`).
+
+You can still drop zips here if you prefer:
 
 - `Xray-macos-arm64-v8a.zip`
 - `Xray-macos-64.zip`

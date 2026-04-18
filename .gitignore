@@ -217,6 +217,10 @@ macos-app/dist/
 # Optional local Xray release zips (see macos-app/third_party/xray-zips/README.md)
 macos-app/third_party/xray-zips/*.zip
 
+# Local release assets (used to build DMG offline; keep README tracked)
+macos-app/assets/*.zip
+macos-app/assets/scapy-*.whl
+
 # Xray vendored binaries (run macos-app/scripts/fetch-xray-vendor.sh once per clone)
 macos-app/bundle/xray/xray
 macos-app/bundle/xray/geoip.dat

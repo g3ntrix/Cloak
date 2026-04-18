@@ -11,7 +11,7 @@ import AppKit
 enum SudoPrivilege {
     static let sudoersPath = "/etc/sudoers.d/cloak"
     static let wrapperPath = "/usr/local/bin/cloak-listener"
-    static let wrapperVersion = "3"
+    static let wrapperVersion = "4"
     static let xrayWrapperPath = "/usr/local/bin/cloak-xray"
     /// `sudo -n cloak-tun-routes up|down <connect_ip> <utun_name>` — IPv4 split routes for TUN mode.
     static let tunRoutesPath = "/usr/local/bin/cloak-tun-routes"
@@ -115,11 +115,20 @@ enum SudoPrivilege {
         if [ "${1:-}" = "--wrapper-version" ]; then echo "\(wrapperVersion)"; exit 0; fi
         export CLOAK_CONFIG=\"\(configPath)\"
         cd \"\(projectDir)\"
+        WHEEL_DIR=\"\(projectDir)/wheelhouse\"
         # Ensure macOS packet capture dependency exists.
         if ! \"\(pythonPath)\" -c 'import scapy' >/dev/null 2>&1; then
           \"\(pythonPath)\" -m ensurepip --upgrade >/dev/null 2>&1 || true
-          \"\(pythonPath)\" -m pip install -q --disable-pip-version-check scapy >/dev/null 2>&1 || {
-            echo \"error: scapy install failed. Run: \(pythonPath) -m pip install scapy\" >&2
+          if [ ! -d \"$WHEEL_DIR\" ] || ! ls \"$WHEEL_DIR\"/scapy-*.whl >/dev/null 2>&1; then
+            echo \"error: bundled scapy wheel missing. Rebuild release so wheelhouse is included.\" >&2
+            exit 12
+          fi
+          \"\(pythonPath)\" -m pip install -q --disable-pip-version-check --no-index --find-links \"$WHEEL_DIR\" scapy >/dev/null 2>&1 || {
+            echo \"error: scapy install from bundled wheel failed.\" >&2
+            exit 12
+          }
+          \"\(pythonPath)\" -c 'import scapy' >/dev/null 2>&1 || {
+            echo \"error: scapy import failed after wheel install.\" >&2
             exit 12
           }
         fi

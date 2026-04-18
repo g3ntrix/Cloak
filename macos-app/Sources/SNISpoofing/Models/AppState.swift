@@ -70,6 +70,7 @@ final class AppState: ObservableObject {
         self.settings = store.loadSettings() ?? .default
         self.profiles = store.loadProfiles()
         self.listenerProject = store.loadListenerProjectConfig() ?? .default
+        seedBundledProfilesIfNeeded()
 
         python.onLog = { [weak self] line in
             Task { @MainActor in self?.appendLog(line, prefix: "") }
@@ -79,6 +80,27 @@ final class AppState: ObservableObject {
         }
 
         Task { [weak self] in await self?.runDirectIPLookup() }
+    }
+
+    private func seedBundledProfilesIfNeeded() {
+        guard profiles.isEmpty else { return }
+        let seeds = [
+            "trojan://humanity@127.0.0.1:40443?security=tls&sni=www.ignitelimit.com&type=ws&path=/assignment&host=www.ignitelimit.com#Amirstar",
+            "trojan://humanity@127.0.0.1:40443?security=tls&sni=www.creationlong.org&allowInsecure=1&type=ws&path=/assignment&host=www.creationlong.org#cloud"
+        ]
+        var imported: [Profile] = []
+        for raw in seeds {
+            if let p = try? ProfileImporter.importFrom(raw) {
+                imported.append(p)
+            }
+        }
+        guard !imported.isEmpty else { return }
+        profiles = imported
+        if settings.activeProfileID == nil {
+            settings.activeProfileID = imported.first?.id
+            saveSettings()
+        }
+        saveProfiles()
     }
 
     private func appendLog(_ line: LogLine, prefix: String) {

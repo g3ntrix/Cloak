@@ -26,6 +26,7 @@ resolve_zip() {
   local candidate paths
   paths=(
     "${envpath:-}"
+    "$MACOS_APP/assets/$asset"
     "$MACOS_APP/third_party/xray-zips/$asset"
     "$REPO_ROOT/macos-app/third_party/xray-zips/$asset"
   )
@@ -38,7 +39,8 @@ resolve_zip() {
   echo "Downloading $URL_BASE/$asset …" >&2
   if ! curl -fsSL --retry 5 --retry-delay 2 "$URL_BASE/$asset" -o "$dest"; then
     echo "error: missing $asset and curl failed. Place the file at:" >&2
-    echo "  $MACOS_APP/third_party/xray-zips/$asset" >&2
+    echo "  $MACOS_APP/assets/$asset" >&2
+    echo "  (or run ./macos-app/scripts/fetch-release-assets.sh)" >&2
     exit 1
   fi
   echo "$dest"
