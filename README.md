@@ -27,6 +27,14 @@ Details: [`macos-app/README.md`](macos-app/README.md)
 - Configure `config.json` beside `main.py`
 - Run with the privileges your OS requires for raw capture/injection
 
+## Donations
+
+If this project helps you, you can support development:
+
+- TON: `UQCriHkMUa6h9oN059tyC23T13OsQhGGM3hUS2S4IYRBZgvx`
+- USDT (BEP20): `0x71F41696c60C4693305e67eE3Baa650a4E3dA796`
+- TRX (TRON): `TFrCzU7bDey9WSh3fhqCBqhaiMzr8VhcUV`
+
 ## License
 
 See [LICENSE](LICENSE).
