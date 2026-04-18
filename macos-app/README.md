@@ -1,42 +1,31 @@
-# Cloak — macOS app
+# Cloak for macOS
 
-SwiftUI front-end for the Python **SNI-Spoofing** listener plus a bundled **Xray-core** client (local SOCKS, profiles as share URLs).
+Cloak is an easy-to-use macOS client built around SNI spoofing. It takes CDN profile configs directly, includes the core connection logic inside the app, and removes the need to run a separate V2Ray/Xray client.
 
-See the [root README](../README.md) for the full repo.
+## What it does
 
-## Build (universal app + universal `xray`)
+- Import and manage profiles
+- Connect/disconnect with one click
+- Use local SOCKS proxy mode
+- Optional system tunnel (TUN) mode
+- Show direct endpoint latency so you can compare configs
 
-From the repository root:
+## Quick start
 
-```bash
-chmod +x scripts/build-release.sh macos-app/scripts/*.sh
-./scripts/build-release.sh
-```
+1. Download `Cloak.app`.
+2. Open the app and import your profile URL.
+3. Select a profile and press **Start**.
+4. Optionally enable **System tunnel (TUN)** from the Dashboard.
 
-This script:
+## Unsigned app note
 
-1. Runs `macos-app/scripts/fetch-xray-vendor.sh` — downloads or uses local release zips for **arm64** and **x64**, then **`lipo`**s a single universal `xray` into `bundle/xray/`.
-2. Runs `macos-app/scripts/build-app.sh` — **`swift build`** for **arm64** and **x86_64**, **`lipo`**s the Swift binary, embeds `xray` + `geoip.dat` + `geosite.dat`, ad-hoc signs.
+This app is not code-signed. macOS may block it on first launch.  
+If needed, open it via **System Settings -> Privacy & Security** and allow it manually.
 
-Output (default `BUILD_VARIANT=all`):  
-`macos-app/dist/Cloak-arm64.app`, `Cloak-x86_64.app`, `Cloak.app` (universal — usual choice for a single download).
+## Donations
 
-Single variant:  
-`BUILD_VARIANT=arm64|x86_64|universal ./macos-app/scripts/build-app.sh`
+If Cloak helps you, you can support development:
 
-### Offline / no GitHub access
-
-Place official release archives (same filenames as upstream) under `third_party/xray-zips/` (see `third_party/xray-zips/README.md`), then run `fetch-xray-vendor.sh` or `build-release.sh`.
-
-### Faster incremental Swift builds
-
-```bash
-SKIP_SPM_CLEAN=1 ./macos-app/scripts/build-app.sh
-```
-
-## Layout
-
-- `Sources/SNISpoofing/` — Swift source
-- `scripts/` — `fetch-xray-vendor.sh`, `build-app.sh`
-- `bundle/xray/` — generated vendored `xray` + geo data (not committed; see root `.gitignore`)
-- `logo/` — brand assets
+- TON: `UQCriHkMUa6h9oN059tyC23T13OsQhGGM3hUS2S4IYRBZgvx`
+- USDT (BEP20): `0x71F41696c60C4693305e67eE3Baa650a4E3dA796`
+- TRX (TRON): `TFrCzU7bDey9WSh3fhqCBqhaiMzr8VhcUV`
