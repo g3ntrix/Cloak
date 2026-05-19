@@ -13,8 +13,6 @@ struct ProfilesView: View {
     @State private var renaming: UUID?
     @State private var renameDraft: String = ""
 
-    @State private var pingResults: [UUID: RealPingService.Result] = [:]
-    @State private var pinging: Set<UUID> = []
     @State private var sortByPing = false
     @State private var checkedIDs: Set<UUID> = []
     @State private var selectionMode = false
@@ -22,12 +20,17 @@ struct ProfilesView: View {
     @State private var dropActive = false
     @State private var dropError: String?
     @State private var showBulkDelete = false
+    @State private var showRemoveUnpingedConfirm = false
+
+    private var profilesWithoutSuccessfulPingCount: Int {
+        app.profilesWithoutSuccessfulPing.count
+    }
 
     private var orderedProfiles: [Profile] {
         guard sortByPing else { return app.profiles }
         return app.profiles.sorted { a, b in
-            let ra = pingResults[a.id]?.millis ?? Int.max
-            let rb = pingResults[b.id]?.millis ?? Int.max
+            let ra = app.profilePingResults[a.id]?.millis ?? Int.max
+            let rb = app.profilePingResults[b.id]?.millis ?? Int.max
             if ra == rb { return a.name.localizedCompare(b.name) == .orderedAscending }
             return ra < rb
         }
@@ -36,6 +39,7 @@ struct ProfilesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            dropHintBanner
             toolbar
             content
         }
@@ -79,6 +83,15 @@ struct ProfilesView: View {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) { deleteChecked() }
         }
+        .alert(
+            "Remove \(profilesWithoutSuccessfulPingCount) profile\(profilesWithoutSuccessfulPingCount == 1 ? "" : "s")?",
+            isPresented: $showRemoveUnpingedConfirm
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Remove", role: .destructive) { removeProfilesWithoutSuccessfulPing() }
+        } message: {
+            Text("Deletes every profile that has no successful ping (failed or not tested). This cannot be undone.")
+        }
     }
 
     // MARK: - Sub-views
@@ -89,8 +102,8 @@ struct ProfilesView: View {
                 Text("Profiles")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                 Text(app.profiles.isEmpty
-                     ? "Paste links or drop a subscription file to add your first profile."
-                     : "\(app.profiles.count) profile\(app.profiles.count == 1 ? "" : "s") · tap a profile to make it active.")
+                     ? "Paste links or drop a .txt file to add your first profile."
+                     : "\(app.profiles.count) profile\(app.profiles.count == 1 ? "" : "s") · tap to activate · drop a file to import more.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -98,35 +111,89 @@ struct ProfilesView: View {
             Button {
                 showImport = true
             } label: {
-                Label("Import", systemImage: "tray.and.arrow.down.fill")
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Add")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
         }
     }
 
+    private var dropHintBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: dropActive ? "arrow.down.doc.fill" : "doc.badge.plus")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(dropActive ? Color.accentColor : .secondary)
+            Text(dropActive
+                 ? "Release to import"
+                 : "Drag and drop a text file with vless, trojan, vmess, or ss links")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(dropActive ? Color.accentColor : .secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(dropActive
+                      ? Color.accentColor.opacity(0.12)
+                      : AppTheme.subtleFill(for: colorScheme))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(
+                            style: StrokeStyle(lineWidth: 1, dash: dropActive ? [] : [5, 4]),
+                            antialiased: true
+                        )
+                        .foregroundStyle(dropActive ? Color.accentColor.opacity(0.6) : AppTheme.faintStroke(for: colorScheme))
+                )
+        )
+    }
+
     @ViewBuilder
     private var toolbar: some View {
         if !app.profiles.isEmpty {
             HStack(spacing: 10) {
-                Button {
-                    Task { @MainActor in await pingAll() }
-                } label: {
-                    if !pinging.isEmpty && pinging.count == app.profiles.count {
-                        Label("Pinging…", systemImage: "hourglass")
-                    } else {
+                if app.isPingBatchRunning {
+                    Button("Cancel") { app.cancelPingBatch() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    let remaining = app.profilePingingIDs.count
+                    let total = app.profiles.count
+                    Text("\(total - remaining)/\(total)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button {
+                        app.startPingAllProfiles()
+                    } label: {
                         Label("Ping all", systemImage: "antenna.radiowaves.left.and.right")
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!app.profilePingingIDs.isEmpty)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!pinging.isEmpty)
 
                 Toggle(isOn: $sortByPing) {
                     Text("Sort by ping").font(.system(size: 11))
                 }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+
+                if !app.isPingBatchRunning,
+                   !app.profilePingResults.isEmpty,
+                   profilesWithoutSuccessfulPingCount > 0 {
+                    Button("Remove no ping (\(profilesWithoutSuccessfulPingCount))", role: .destructive) {
+                        showRemoveUnpingedConfirm = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
 
                 Spacer()
 
@@ -171,8 +238,8 @@ struct ProfilesView: View {
                             selectionMode: selectionMode,
                             isRenaming: renaming == p.id,
                             renameDraft: $renameDraft,
-                            pingResult: pingResults[p.id],
-                            isPinging: pinging.contains(p.id),
+                            pingResult: app.profilePingResults[p.id],
+                            isPinging: app.profilePingingIDs.contains(p.id),
                             onActivate: {
                                 guard renaming != p.id else { return }
                                 if selectionMode {
@@ -182,7 +249,7 @@ struct ProfilesView: View {
                                 }
                             },
                             onToggleCheck: { toggleChecked(p.id) },
-                            onPing: { Task { @MainActor in await pingOne(p) } },
+                            onPing: { Task { @MainActor in await app.pingSingleProfile(p) } },
                             onStartRename: {
                                 renameDraft = p.name
                                 renaming = p.id
@@ -205,7 +272,7 @@ struct ProfilesView: View {
                                 renameDraft = p.name
                                 renaming = p.id
                             }
-                            Button("Ping") { Task { @MainActor in await pingOne(p) } }
+                            Button("Ping") { Task { @MainActor in await app.pingSingleProfile(p) } }
                             Divider()
                             Button("Copy SNI") {
                                 let pb = NSPasteboard.general
@@ -297,30 +364,21 @@ struct ProfilesView: View {
     private func deleteChecked() {
         for id in checkedIDs {
             app.delete(profileID: id)
-            pingResults.removeValue(forKey: id)
         }
         checkedIDs.removeAll()
         selectionMode = false
     }
 
-    // MARK: - Ping (listener + xray through SOCKS)
-
     @MainActor
-    private func pingOne(_ p: Profile) async {
-        guard !pinging.contains(p.id) else { return }
-        pinging.insert(p.id)
-        pingResults[p.id] = await app.pingProfile(p)
-        pinging.remove(p.id)
-    }
-
-    @MainActor
-    private func pingAll() async {
-        let toPing = app.profiles
-        guard !toPing.isEmpty else { return }
-        for p in toPing {
-            await pingOne(p)
+    private func removeProfilesWithoutSuccessfulPing() {
+        let removed = app.deleteProfilesWithoutSuccessfulPing()
+        checkedIDs.removeAll()
+        selectionMode = false
+        if removed > 0 {
+            flashDropError("Removed \(removed) profile\(removed == 1 ? "" : "s") with no ping.")
         }
     }
+
 }
 
 // MARK: - Row
@@ -497,14 +555,25 @@ private struct EmptyState: View {
                 .foregroundStyle(showDropHint ? Color.accentColor : .secondary)
             Text(showDropHint ? "Drop to import" : "No profiles yet")
                 .font(.system(size: 15, weight: .semibold))
-            Text("Paste your trojan:// or vless:// links, or drop a subscription text file. Cloak will detect everything in one go.")
+            Text("Paste your links, or drag and drop a text file with vless, trojan, vmess, or ss configs.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
-            Button("Import…", action: onImport)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+            Button {
+                onImport()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Add profiles")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
@@ -544,7 +613,7 @@ private struct ImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Import profiles")
+                Text("Add profiles")
                     .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 if detectedCount > 0 && lastSummary == nil {
@@ -583,7 +652,7 @@ private struct ImportSheet: View {
                 Spacer()
                 Button(lastSummary == nil ? "Cancel" : "Done") { dismiss() }
                 if lastSummary == nil {
-                    Button("Import \(detectedCount > 0 ? "(\(detectedCount))" : "")") {
+                    Button("Add \(detectedCount > 0 ? "(\(detectedCount))" : "")") {
                         switch onSubmit(text) {
                         case .error(let msg):
                             error = msg

@@ -153,17 +153,25 @@ struct SettingsView: View {
                             Task { await app.reconnectIfRunning() }
                         }
                     ))
-                    HStack(spacing: 10) {
-                        compactField(label: "Port", text: proxyPortBinding, monospaced: true, width: 90)
-                        Text(verbatim: "→ \(app.settings.exposesToLAN ? "0.0.0.0" : "127.0.0.1"):\(app.settings.listenPort)")
+                    HStack(alignment: .center, spacing: 10) {
+                        Text("Port")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        TextField("", text: proxyPortBinding)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .frame(width: 72)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(AppTheme.controlFill(for: colorScheme))
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.stroke(for: colorScheme)))
+                            )
+                        Text(verbatim: "Listens on \(app.settings.exposesToLAN ? "0.0.0.0" : "127.0.0.1"):\(app.settings.listenPort)")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
-                        Spacer()
                     }
-                    Text("Local keeps the proxy on this Mac only. LAN lets other devices on your network use the same port.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }

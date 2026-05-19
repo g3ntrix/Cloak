@@ -69,10 +69,6 @@ final class XrayCoreManager {
     func stopSync() {
         if let p = process, p.isRunning {
             p.terminate()
-            let deadline = Date().addingTimeInterval(1.5)
-            while p.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
         }
         pipe?.fileHandleForReading.readabilityHandler = nil
         process = nil

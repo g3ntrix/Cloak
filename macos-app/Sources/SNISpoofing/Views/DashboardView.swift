@@ -38,7 +38,7 @@ struct DashboardView: View {
         Card {
             HStack(alignment: .center, spacing: 14) {
                 StatusOrb(status: app.status)
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(app.status.label)
                         .font(.system(size: 19, weight: .semibold))
                         .lineLimit(1)
@@ -46,9 +46,13 @@ struct DashboardView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
-                    ipRow
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: 12)
+                if app.status.isRunning {
+                    ipColumn
+                        .layoutPriority(1)
+                        .padding(.trailing, 24)
+                }
                 PowerButton(isRunning: app.status.isRunning,
                             isBusy: app.status.isTransitioning) {
                     Task {
@@ -63,41 +67,50 @@ struct DashboardView: View {
     }
 
     @ViewBuilder
-    private var ipRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: app.status.isRunning ? "globe.americas.fill" : "network")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(app.status.isRunning ? .mint : .blue)
-            if let ip = app.status.isRunning ? app.egressIP : app.directIP {
-                Text(verbatim: ip)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .textSelection(.enabled)
-                if let cc = app.status.isRunning ? app.egressCountry : app.directCountry, !cc.isEmpty {
-                    Text(countryLine(code: cc))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-            } else if let msg = app.status.isRunning ? app.egressLookupMessage : app.directLookupMessage {
-                Text(msg)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            } else {
-                Text("Resolving…")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            Button {
-                app.status.isRunning ? app.refreshEgressNow() : app.refreshDirectIP()
-            } label: {
-                Image(systemName: "arrow.clockwise")
+    private var ipColumn: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "globe.americas.fill")
                     .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.mint)
+                Text("Egress IP")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Button { app.refreshEgressNow() } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh egress IP")
             }
-            .buttonStyle(.borderless)
-            .help("Refresh IP")
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if let ip = app.egressIP {
+                    Text(verbatim: ip)
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: false)
+                    if let cc = app.egressCountry, !cc.isEmpty {
+                        Text(countryLine(code: cc))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                } else if let msg = app.egressLookupMessage {
+                    Text(msg)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Resolving…")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .frame(minWidth: 148, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(0.04))

@@ -1,34 +1,24 @@
 import Foundation
 import Network
 
-/// Measures real round-trip latency for a profile: we open a TCP connection
-/// to `profile.server:profile.serverPort` and time the handshake. This is
-/// what other VPN GUIs call "ping" — it's the meaningful number for "which
-/// of my servers is fastest right now".
-///
-/// A 10-second hard ceiling is enforced per attempt.
+/// Latency probes for profiles and local endpoints.
 enum RealPingService {
     struct Result: Equatable {
-        /// Round-trip time in milliseconds, nil if unreachable within `timeout`.
         let millis: Int?
-        /// Short human-friendly label ("timeout", "refused", …). nil on success.
         let error: String?
     }
 
-    /// Measures TCP connect time to `targetHost:targetPort` through a local SOCKS5 proxy.
+    /// HTTP probe through SOCKS — measures end-to-end time for traffic routed by Xray.
+    private static let socksProbeURL = "http://connectivitycheck.gstatic.com/generate_204"
+
     static func pingViaSocks(
         proxyHost: String,
         proxyPort: Int,
-        targetHost: String,
-        targetPort: UInt16 = 443,
-        timeout: TimeInterval = 12
+        timeout: TimeInterval = 15
     ) async -> Result {
         let proxy = socksEndpoint(host: proxyHost, port: proxyPort)
-        let host = targetHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty else { return Result(millis: nil, error: "no server") }
-        let url = "https://\(host):\(targetPort)/"
         return await Task.detached(priority: .utility) {
-            pingHTTPSViaCurl(socks: proxy, url: url, timeout: timeout)
+            curlTimingThroughSocks(socks: proxy, url: socksProbeURL, timeout: timeout)
         }.value
     }
 
@@ -40,15 +30,16 @@ enum RealPingService {
         return "\(t):\(port)"
     }
 
-    private static func pingHTTPSViaCurl(socks: String, url: String, timeout: TimeInterval) -> Result {
+    private static func curlTimingThroughSocks(socks: String, url: String, timeout: TimeInterval) -> Result {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        let timeoutStr = String(Int(timeout))
         p.arguments = [
             "-sS", "-o", "/dev/null",
-            "--connect-timeout", String(Int(timeout)),
-            "--max-time", String(Int(timeout) + 2),
+            "--connect-timeout", timeoutStr,
+            "--max-time", timeoutStr,
             "--socks5-hostname", socks,
-            "-w", "%{time_connect}",
+            "-w", "%{time_total}",
             url,
         ]
         let out = Pipe()
@@ -63,16 +54,28 @@ enum RealPingService {
         p.waitUntilExit()
         let stdout = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let stderr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        guard p.terminationStatus == 0, let seconds = Double(stdout.trimmingCharacters(in: .whitespacesAndNewlines)),
-              seconds > 0 else {
-            let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            if msg.localizedCaseInsensitiveContains("timeout") { return Result(millis: nil, error: "timeout") }
-            if msg.localizedCaseInsensitiveContains("refused") { return Result(millis: nil, error: "refused") }
-            return Result(millis: nil, error: msg.isEmpty ? "failed" : "failed")
+
+        if let seconds = Double(stdout.trimmingCharacters(in: .whitespacesAndNewlines)), seconds > 0 {
+            let ms = Int((seconds * 1000).rounded())
+            if p.terminationStatus == 0 || ms >= 5 {
+                return Result(millis: max(ms, 1), error: nil)
+            }
         }
-        return Result(millis: max(1, Int(seconds * 1000)), error: nil)
+
+        return Result(millis: nil, error: shortCurlError(stderr, exitCode: p.terminationStatus))
     }
 
+    private static func shortCurlError(_ stderr: String, exitCode: Int32) -> String {
+        let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if msg.localizedCaseInsensitiveContains("timeout") || msg.contains("28") { return "timeout" }
+        if msg.localizedCaseInsensitiveContains("refused") || msg.contains("7") { return "refused" }
+        if msg.localizedCaseInsensitiveContains("socks") { return "proxy" }
+        if exitCode == 7 { return "refused" }
+        if exitCode == 28 { return "timeout" }
+        return msg.isEmpty ? "failed" : "failed"
+    }
+
+    /// Direct TCP connect to host:port (local bridge reachability).
     static func ping(host: String, port: UInt16, timeout: TimeInterval = 10) async -> Result {
         guard !host.isEmpty, port > 0 else {
             return Result(millis: nil, error: "no server")
@@ -125,8 +128,6 @@ enum RealPingService {
     }
 
     private static func shortError(_ err: NWError) -> String {
-        // NWError keeps gaining cases across SDKs (e.g. `.wifiAware`). Use a
-        // lossy string match so we stay warning-free on both old and new SDKs.
         let desc = "\(err)"
         if desc.contains("ECONNREFUSED") || desc.contains("Connection refused") { return "refused" }
         if desc.contains("EHOSTUNREACH") || desc.contains("unreachable")       { return "unreachable" }
@@ -136,8 +137,6 @@ enum RealPingService {
         return "error"
     }
 
-    /// Tiny reference container so the continuation + deadline closures can
-    /// share a single "resumed" flag without going through `DispatchQueue.sync`.
     private final class _Box<T> {
         var value: T
         init(_ v: T) { value = v }

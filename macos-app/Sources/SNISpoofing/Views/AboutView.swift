@@ -10,6 +10,7 @@ struct AboutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 hero
+                projectCard
                 authorCard
                 donateCard
             }
@@ -41,6 +42,26 @@ struct AboutView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var projectCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.yellow)
+                    Text("Open source")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                Text("Cloak lives on GitHub. If it helps you, I'd love a star on the repo.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Link("github.com/g3ntrix/Cloak", destination: URL(string: "https://github.com/g3ntrix/Cloak")!)
+                    .font(.system(size: 12, weight: .medium))
             }
         }
     }

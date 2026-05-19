@@ -52,9 +52,9 @@ final class AppState: ObservableObject {
     @Published var egressCountry: String?
     @Published var egressLookupMessage: String?
 
-    @Published var directIP: String?
-    @Published var directCountry: String?
-    @Published var directLookupMessage: String?
+    @Published var profilePingResults: [UUID: RealPingService.Result] = [:]
+    @Published var profilePingingIDs: Set<UUID> = []
+    @Published var isPingBatchRunning = false
 
     private let store = ConfigStore()
     private let python = PythonListener()
@@ -65,11 +65,14 @@ final class AppState: ObservableObject {
     private var listenerStartedForPingOnly = false
     private var sessionBaselineRx: UInt64 = 0
     private var sessionBaselineTx: UInt64 = 0
+    private var pingBatchToken: UUID?
+    private var pingBatchTask: Task<Void, Never>?
 
     init() {
         self.settings = store.loadSettings() ?? .default
         self.profiles = store.loadProfiles()
         self.listenerProject = store.loadListenerProjectConfig() ?? .default
+        self.profilePingResults = store.loadPingResults()
         seedBundledProfilesIfNeeded()
 
         python.onLog = { [weak self] line in
@@ -78,8 +81,6 @@ final class AppState: ObservableObject {
         xray.onLog = { [weak self] line in
             Task { @MainActor in self?.appendLog(line, prefix: "") }
         }
-
-        Task { [weak self] in await self?.runDirectIPLookup() }
     }
 
     /// Adds bundled example profiles if they are not already present (by server/port/SNI).
@@ -135,22 +136,6 @@ final class AppState: ObservableObject {
         SudoPrivilege.killLeftoverListener()
     }
 
-    func refreshDirectIP() {
-        Task { [weak self] in await self?.runDirectIPLookup() }
-    }
-
-    private func runDirectIPLookup() async {
-        directLookupMessage = "Looking up public IP…"
-        do {
-            let r = try await EgressInfoService.fetchDirect()
-            directIP = r.ip
-            directCountry = r.country
-            directLookupMessage = nil
-        } catch {
-            directLookupMessage = error.localizedDescription
-        }
-    }
-
     func saveSettings() { store.saveSettings(settings) }
     func saveProfiles() { store.saveProfiles(profiles) }
     func saveListenerProject() { store.saveListenerProjectConfig(listenerProject) }
@@ -175,11 +160,28 @@ final class AppState: ObservableObject {
 
     func delete(profileID id: UUID) {
         profiles.removeAll { $0.id == id }
+        profilePingResults.removeValue(forKey: id)
+        persistPingResults()
         if settings.activeProfileID == id {
             settings.activeProfileID = profiles.first?.id
             saveSettings()
         }
         saveProfiles()
+    }
+
+    /// Profiles with no successful ping (failed, untested, or missing ms).
+    var profilesWithoutSuccessfulPing: [Profile] {
+        profiles.filter { profilePingResults[$0.id]?.millis == nil }
+    }
+
+    @discardableResult
+    func deleteProfilesWithoutSuccessfulPing() -> Int {
+        let doomed = profilesWithoutSuccessfulPing.map(\.id)
+        guard !doomed.isEmpty else { return 0 }
+        for id in doomed {
+            delete(profileID: id)
+        }
+        return doomed.count
     }
 
     func setActive(_ id: UUID) {
@@ -425,6 +427,135 @@ final class AppState: ObservableObject {
         return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    func persistPingResults() {
+        store.savePingResults(profilePingResults)
+    }
+
+    func cancelPingBatch() {
+        pingBatchToken = nil
+        pingBatchTask?.cancel()
+        pingBatchTask = nil
+        isPingBatchRunning = false
+        profilePingingIDs.removeAll()
+    }
+
+    /// Tests every profile. Uses one shared listener between probes (faster than
+    /// restarting from scratch each time). Xray still runs one profile at a time
+    /// because the app has a single local SOCKS port.
+    func startPingAllProfiles() {
+        cancelPingBatch()
+        let token = UUID()
+        pingBatchToken = token
+        isPingBatchRunning = true
+        profilePingingIDs = Set(profiles.map(\.id))
+
+        pingBatchTask = Task { @MainActor in
+            defer {
+                if pingBatchToken == token {
+                    isPingBatchRunning = false
+                    profilePingingIDs.removeAll()
+                    pingBatchToken = nil
+                }
+            }
+
+            let list = profiles
+            guard !list.isEmpty else { return }
+
+            if status.isRunning {
+                for p in list {
+                    guard pingBatchToken == token, !Task.isCancelled else { break }
+                    let r = await pingProfile(p)
+                    profilePingResults[p.id] = r
+                    profilePingingIDs.remove(p.id)
+                    persistPingResults()
+                }
+                return
+            }
+
+            var listenerStarted = false
+            defer {
+                if listenerStarted, !status.isRunning {
+                    python.stop()
+                    listenerStartedForPingOnly = false
+                }
+            }
+
+            do {
+                try prepareListenerForPingBatch()
+                listenerStarted = true
+                try await awaitListenerReady()
+            } catch {
+                let err = RealPingService.Result(millis: nil, error: shortPingError(error))
+                for p in list {
+                    profilePingResults[p.id] = err
+                    profilePingingIDs.remove(p.id)
+                }
+                persistPingResults()
+                return
+            }
+
+            for p in list {
+                guard pingBatchToken == token, !Task.isCancelled else { break }
+                let r = await pingProfileViaBatch(p)
+                profilePingResults[p.id] = r
+                profilePingingIDs.remove(p.id)
+                persistPingResults()
+            }
+        }
+    }
+
+    func pingSingleProfile(_ profile: Profile) async {
+        guard !profilePingingIDs.contains(profile.id) else { return }
+        profilePingingIDs.insert(profile.id)
+        let r = await pingProfile(profile)
+        profilePingResults[profile.id] = r
+        profilePingingIDs.remove(profile.id)
+        persistPingResults()
+    }
+
+    private func prepareListenerForPingBatch() throws {
+        saveListenerProject()
+        if !SudoPrivilege.isInstalled() {
+            try SudoPrivilege.install()
+            privilegesInstalled = true
+        }
+        let projectURL = URL(fileURLWithPath: settings.resolvedPythonProjectPath, isDirectory: true)
+        if !python.isRunning() {
+            try python.start(projectDirectory: projectURL, config: listenerProject)
+            listenerStartedForPingOnly = true
+        }
+    }
+
+    /// Ping while listener is already up (batch path): only cycle Xray per profile.
+    private func pingProfileViaBatch(_ profile: Profile) async -> RealPingService.Result {
+        switch profile.kind {
+        case .vless, .trojan: break
+        case .vmess, .shadowsocks:
+            return RealPingService.Result(millis: nil, error: "unsupported")
+        }
+
+        let socksHost = settings.resolvedSocksHostForLocalClient
+        let socksPort = settings.listenPort
+
+        do {
+            try await awaitListenerReady()
+            let xdata = try XrayOutboundBuilder.generate(
+                settings: settings,
+                profile: profile,
+                bridge: listenerProject
+            )
+            let cfgURL = try store.writeGeneratedXrayConfig(xdata)
+            try xray.start(configURL: cfgURL)
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            let result = await RealPingService.pingViaSocks(proxyHost: socksHost, proxyPort: socksPort)
+            xray.stopSync()
+            return result
+        } catch {
+            xray.stopSync()
+            return RealPingService.Result(millis: nil, error: shortPingError(error))
+        }
+    }
+
     /// Brings up the Python listener and Xray for `profile`, measures latency through
     /// the local SOCKS hop, then tears down anything started only for this probe.
     func pingProfile(_ profile: Profile) async -> RealPingService.Result {
@@ -434,24 +565,6 @@ final class AppState: ObservableObject {
             return RealPingService.Result(millis: nil, error: "unsupported")
         }
 
-        let targetHost: String = {
-            let sni = profile.tls.serverName.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sni.isEmpty { return sni }
-            return profile.server.trimmingCharacters(in: .whitespacesAndNewlines)
-        }()
-        guard !targetHost.isEmpty else {
-            return RealPingService.Result(millis: nil, error: "no server")
-        }
-        let targetPort: UInt16 = {
-            let sni = profile.tls.serverName.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sni.isEmpty { return 443 }
-            guard profile.serverPort > 0, profile.serverPort <= 65_535 else { return 0 }
-            return UInt16(clamping: profile.serverPort)
-        }()
-        guard targetPort > 0 else {
-            return RealPingService.Result(millis: nil, error: "bad port")
-        }
-
         let socksHost = settings.resolvedSocksHostForLocalClient
         let socksPort = settings.listenPort
 
@@ -459,12 +572,7 @@ final class AppState: ObservableObject {
             guard activeProfile?.id == profile.id else {
                 return RealPingService.Result(millis: nil, error: "disconnect first")
             }
-            return await RealPingService.pingViaSocks(
-                proxyHost: socksHost,
-                proxyPort: socksPort,
-                targetHost: targetHost,
-                targetPort: targetPort
-            )
+            return await RealPingService.pingViaSocks(proxyHost: socksHost, proxyPort: socksPort)
         }
 
         var startedListener = false
@@ -499,14 +607,9 @@ final class AppState: ObservableObject {
             let cfgURL = try store.writeGeneratedXrayConfig(xdata)
             try xray.start(configURL: cfgURL)
             startedXray = true
-            try await Task.sleep(nanoseconds: 450_000_000)
+            try await Task.sleep(nanoseconds: 1_200_000_000)
 
-            return await RealPingService.pingViaSocks(
-                proxyHost: socksHost,
-                proxyPort: socksPort,
-                targetHost: targetHost,
-                targetPort: targetPort
-            )
+            return await RealPingService.pingViaSocks(proxyHost: socksHost, proxyPort: socksPort)
         } catch {
             return RealPingService.Result(millis: nil, error: shortPingError(error))
         }

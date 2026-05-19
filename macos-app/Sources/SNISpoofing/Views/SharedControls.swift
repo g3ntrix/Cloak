@@ -9,14 +9,12 @@ struct ListenScopeToggle: View {
         HStack(spacing: 0) {
             scopeSegment(
                 title: "Local",
-                subtitle: "This Mac",
                 icon: "laptopcomputer",
                 selected: !exposesToLAN
             ) { exposesToLAN = false }
 
             scopeSegment(
                 title: "LAN",
-                subtitle: "All devices",
                 icon: "wifi.router",
                 selected: exposesToLAN
             ) { exposesToLAN = true }
@@ -32,27 +30,21 @@ struct ListenScopeToggle: View {
 
     private func scopeSegment(
         title: String,
-        subtitle: String,
         icon: String,
         selected: Bool,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(subtitle)
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(selected ? Color.accentColor.opacity(colorScheme == .dark ? 0.28 : 0.16) : .clear)
