@@ -2,6 +2,7 @@ import SwiftUI
 
 struct Sidebar: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var tab: ContentView.Tab
 
     var body: some View {
@@ -33,11 +34,12 @@ struct Sidebar: View {
                 .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.ultraThinMaterial)
+        .background(AppTheme.sidebarBackground(for: colorScheme))
     }
 }
 
 private struct SidebarItem: View {
+    @Environment(\.colorScheme) private var colorScheme
     let tab: ContentView.Tab
     let selected: Bool
     let action: () -> Void
@@ -59,7 +61,7 @@ private struct SidebarItem: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(selected
                           ? Color.accentColor.opacity(0.22)
-                          : (hover ? Color.white.opacity(0.06) : .clear))
+                          : (hover ? AppTheme.hoverFill(for: colorScheme) : .clear))
             )
             .foregroundColor(selected ? .accentColor : .primary)
             .contentShape(Rectangle())
@@ -70,6 +72,7 @@ private struct SidebarItem: View {
 }
 
 private struct StatusChip: View {
+    @Environment(\.colorScheme) private var colorScheme
     let status: AppState.Status
     var body: some View {
         HStack(spacing: 8) {
@@ -86,7 +89,7 @@ private struct StatusChip: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.white.opacity(0.06))
+                .fill(AppTheme.subtleFill(for: colorScheme))
         )
     }
     var color: Color {

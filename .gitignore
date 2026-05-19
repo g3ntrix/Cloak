@@ -225,3 +225,7 @@ macos-app/assets/scapy-*.whl
 macos-app/bundle/xray/xray
 macos-app/bundle/xray/geoip.dat
 macos-app/bundle/xray/geosite.dat
+
+
+#temp
+.temp/

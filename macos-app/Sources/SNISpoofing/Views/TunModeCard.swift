@@ -8,7 +8,7 @@ struct TunModeCard: View {
         Card {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 22))
+                    .font(.system(size: 17))
                     .foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 10) {
                     Text("System tunnel (TUN)")

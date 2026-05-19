@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds SwiftPM Cloak.app variant(s), embeds Xray-core + geo data.
 #
-# Outputs under macos-app/dist/ (default BUILD_VARIANT=all):
+# Outputs under macos-app/dist/ (default BUILD_VARIANT=universal):
 #   Cloak-arm64.app   — Apple Silicon only
 #   Cloak-x86_64.app  — Intel only
 #   Cloak.app         — universal (recommended for distribution)
@@ -15,7 +15,37 @@ SWIFT_TARGET="SNISpoofing"
 APP_NAME="Cloak"
 BUNDLE_ID="${BUNDLE_ID:-io.github.snispoofinggui.cloak}"
 DIST="$ROOT/dist"
-BUILD_VARIANT="${BUILD_VARIANT:-all}"
+BUILD_VARIANT="${BUILD_VARIANT:-universal}"
+VERSION="${VERSION:-1.1.0}"
+VENDOR_XRAY="$ROOT/bundle/xray"
+
+ensure_release_assets() {
+  local need_vendor=0
+  local need_wheel=0
+
+  if [[ ! -x "$VENDOR_XRAY/xray" || ! -f "$VENDOR_XRAY/geoip.dat" || ! -f "$VENDOR_XRAY/geosite.dat" ]]; then
+    need_vendor=1
+  fi
+  if ! compgen -G "$ROOT/assets/scapy-*.whl" >/dev/null 2>&1; then
+    need_wheel=1
+  fi
+
+  if [[ "$need_vendor" -eq 0 && "$need_wheel" -eq 0 ]]; then
+    return
+  fi
+
+  if [[ "${SKIP_ASSETS:-0}" == "1" ]]; then
+    echo "error: release assets are missing and SKIP_ASSETS=1." >&2
+    echo "  Expected: $VENDOR_XRAY/{xray,geoip.dat,geosite.dat}" >&2
+    echo "  Expected: $ROOT/assets/scapy-*.whl" >&2
+    echo "  Run: $ROOT/scripts/fetch-release-assets.sh && $ROOT/scripts/fetch-xray-vendor.sh" >&2
+    exit 1
+  fi
+
+  echo "→ release assets missing; preparing Xray/scapy assets"
+  "$ROOT/scripts/fetch-release-assets.sh"
+  "$ROOT/scripts/fetch-xray-vendor.sh"
+}
 
 # Interrupting the script can corrupt SwiftPM's `.build`.
 if [[ "${SKIP_SPM_CLEAN:-}" != "1" ]]; then
@@ -32,6 +62,8 @@ if [[ -x "$ROOT/scripts/make-icns.sh" && -f "$ROOT/logo/Cloak.png" ]]; then
   echo "→ rebuilding Cloak.icns (squircle)"
   "$ROOT/scripts/make-icns.sh"
 fi
+
+ensure_release_assets
 
 echo "→ swift build (arm64)"
 swift build --package-path "$ROOT" -c release \
@@ -50,10 +82,9 @@ if [[ -z "$ARM_BIN" || -z "$X86_BIN" ]]; then
   exit 1
 fi
 
-VENDOR_XRAY="$ROOT/bundle/xray"
 if [[ ! -x "$VENDOR_XRAY/xray" || ! -f "$VENDOR_XRAY/geoip.dat" || ! -f "$VENDOR_XRAY/geosite.dat" ]]; then
   echo "error: missing vendored Xray files." >&2
-  echo "  Run: ./macos-app/scripts/fetch-xray-vendor.sh" >&2
+  echo "  Run: $ROOT/scripts/fetch-xray-vendor.sh" >&2
   echo "  Expected: $VENDOR_XRAY/{xray,geoip.dat,geosite.dat}" >&2
   exit 1
 fi
@@ -155,7 +186,7 @@ assemble_one() {
     <key>CFBundleDisplayName</key><string>$stem</string>
     <key>CFBundleIconFile</key><string>Cloak</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
@@ -167,8 +198,25 @@ assemble_one() {
 </plist>
 PLIST
 
-  codesign --force --deep --sign - "$APP/Contents/Resources/xray"
-  codesign --force --deep --sign - "$APP"
+  ENTITLEMENTS="$ROOT/scripts/entitlements.plist"
+  echo "→ ad-hoc codesigning (hardened runtime)"
+  codesign --force --sign - \
+    --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --timestamp=none \
+    "$APP/Contents/Resources/xray"
+  codesign --force --sign - \
+    --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --timestamp=none \
+    "$APP/Contents/MacOS/$APP_NAME"
+  codesign --force --sign - \
+    --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --timestamp=none \
+    "$APP"
+  xattr -cr "$APP" 2>/dev/null || true
+  codesign --verify --deep --strict --verbose=2 "$APP" >/dev/null
   echo "✔ $APP"
 }
 

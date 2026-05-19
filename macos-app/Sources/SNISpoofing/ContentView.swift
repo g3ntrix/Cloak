@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var app: AppState
     @State private var tab: Tab = .dashboard
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     enum Tab: String, CaseIterable, Identifiable {
         case dashboard, profiles, settings, logs, about
@@ -28,9 +29,9 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             Sidebar(tab: $tab)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+                .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 245)
         } detail: {
             ZStack {
                 BackgroundGradient()
@@ -43,23 +44,20 @@ struct ContentView: View {
                     case .about: AboutView()
                     }
                 }
-                .padding(24)
+                .padding(20)
             }
             .navigationTitle(tab.title)
         }
+        .navigationSplitViewStyle(.balanced)
         .background(WindowAccessor())
     }
 }
 
 struct BackgroundGradient: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
-        LinearGradient(
-            colors: [
-                Color(.sRGB, red: 0.07, green: 0.08, blue: 0.12, opacity: 1),
-                Color(.sRGB, red: 0.10, green: 0.11, blue: 0.16, opacity: 1)
-            ],
-            startPoint: .topLeading, endPoint: .bottomTrailing
-        )
+        AppTheme.background(for: colorScheme)
         .ignoresSafeArea()
     }
 }

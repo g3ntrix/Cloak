@@ -6,10 +6,10 @@ struct AboutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 16) {
-                    CloakBrandImage(size: 72, cornerRadius: 16)
+                    CloakBrandImage(size: 56, cornerRadius: 12)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Cloak")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
                         Text("Cloak routes your traffic through a local SNI-spoofing bridge and Xray to stay connected on restrictive networks.")
                             .foregroundStyle(.secondary)
                             .font(.system(size: 13))
@@ -24,7 +24,7 @@ struct AboutView: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Text("g3ntrix")
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
                         Link("t.me/g3ntrix", destination: URL(string: "https://t.me/g3ntrix")!)
                             .font(.system(size: 13, weight: .medium))
                     }

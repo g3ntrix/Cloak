@@ -196,6 +196,7 @@ struct ProfilesView: View {
 // MARK: - List row
 
 private struct ProfileRow: View {
+    @Environment(\.colorScheme) private var colorScheme
     let profile: Profile
     let isActive: Bool
     let isSelected: Bool
@@ -247,10 +248,10 @@ private struct ProfileRow: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(isSelected
                           ? Color.accentColor.opacity(0.18)
-                          : (hover ? Color.white.opacity(0.05) : Color.white.opacity(0.03)))
+                          : (hover ? AppTheme.hoverFill(for: colorScheme) : AppTheme.subtleFill(for: colorScheme)))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(isSelected ? Color.accentColor.opacity(0.5) : .white.opacity(0.08),
+                            .stroke(isSelected ? Color.accentColor.opacity(0.5) : AppTheme.stroke(for: colorScheme),
                                     lineWidth: 1)
                     )
             )
@@ -271,6 +272,7 @@ private struct ProfileRow: View {
 }
 
 private struct PingChip: View {
+    @Environment(\.colorScheme) private var colorScheme
     let result: RealPingService.Result?
     let isLoading: Bool
     let onTap: () -> Void
@@ -300,8 +302,8 @@ private struct PingChip: View {
             .padding(.vertical, 3)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(.white.opacity(0.05))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.white.opacity(0.08)))
+                    .fill(AppTheme.subtleFill(for: colorScheme))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.faintStroke(for: colorScheme)))
             )
         }
         .buttonStyle(.plain)
@@ -320,10 +322,11 @@ private struct PingChip: View {
 // MARK: - Empty states
 
 private struct EmptyState: View {
+    @Environment(\.colorScheme) private var colorScheme
     let onImport: () -> Void
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "tray").font(.system(size: 26)).foregroundStyle(.secondary)
+            Image(systemName: "tray").font(.system(size: 22)).foregroundStyle(.secondary)
             Text("No profiles yet")
                 .font(.system(size: 13, weight: .medium))
             Text("Paste your profile link to add it.")
@@ -334,20 +337,21 @@ private struct EmptyState: View {
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.03))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.08)))
+            RoundedRectangle(cornerRadius: 10).fill(AppTheme.cardFill(for: colorScheme))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.stroke(for: colorScheme)))
         )
     }
 }
 
 private struct EmptyEditor: View {
+    @Environment(\.colorScheme) private var colorScheme
     let onImport: () -> Void
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "person.crop.rectangle.stack")
-                .font(.system(size: 32))
+                .font(.system(size: 24))
                 .foregroundStyle(.secondary)
             Text("Select or import a profile")
                 .font(.system(size: 15, weight: .semibold))
@@ -356,10 +360,10 @@ private struct EmptyEditor: View {
             Button("Import") { onImport() }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.03))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.08)))
+            RoundedRectangle(cornerRadius: 10).fill(AppTheme.cardFill(for: colorScheme))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.stroke(for: colorScheme)))
         )
     }
 }
@@ -369,6 +373,7 @@ private struct EmptyEditor: View {
 private struct ImportSheet: View {
     /// returns error message or nil on success
     let onSubmit: (String) -> String?
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var error: String?
@@ -383,9 +388,9 @@ private struct ImportSheet: View {
                 .font(.system(size: 12, design: .monospaced))
                 .frame(height: 180)
                 .padding(8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.3)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.controlFill(for: colorScheme)))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.1))
+                    RoundedRectangle(cornerRadius: 8).stroke(AppTheme.stroke(for: colorScheme))
                 )
             if let e = error {
                 Label(e, systemImage: "exclamationmark.triangle.fill")
@@ -412,6 +417,7 @@ private struct ImportSheet: View {
 // MARK: - Editor
 
 private struct ProfileEditor: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Binding var profile: Profile
     let isActive: Bool
     let onActivate: () -> Void
@@ -426,7 +432,7 @@ private struct ProfileEditor: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.04)))
+                        .background(RoundedRectangle(cornerRadius: 8).fill(AppTheme.controlFill(for: colorScheme)))
                     Spacer()
                     if isActive {
                         Label("Active", systemImage: "checkmark.seal.fill")
@@ -589,6 +595,7 @@ private struct ProfileEditor: View {
 // MARK: - Field helper
 
 private struct Field: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     @Binding var text: String
     var monospaced: Bool = false
@@ -615,10 +622,10 @@ private struct Field: View {
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.black.opacity(0.25))
+                    .fill(AppTheme.controlFill(for: colorScheme))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                            .stroke(AppTheme.stroke(for: colorScheme), lineWidth: 1)
                     )
             )
         }

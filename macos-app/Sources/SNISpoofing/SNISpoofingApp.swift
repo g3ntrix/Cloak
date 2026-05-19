@@ -8,7 +8,7 @@ struct SNISpoofingApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
-                .frame(minWidth: 1000, minHeight: 640)
+                .frame(minWidth: 900, minHeight: 580)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.automatic)

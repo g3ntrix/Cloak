@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.colorScheme) private var colorScheme
     @State private var listenerDraft: String = ListenerProjectConfig.defaultJSONString()
     @State private var jsonError: String?
     @State private var saved = false
@@ -35,9 +36,9 @@ struct SettingsView: View {
                             .padding(8)
                             .background(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .fill(.black.opacity(0.25))
+                                    .fill(AppTheme.controlFill(for: colorScheme))
                                     .overlay(RoundedRectangle(cornerRadius: 8)
-                                        .stroke(.white.opacity(0.08), lineWidth: 1))
+                                        .stroke(AppTheme.stroke(for: colorScheme), lineWidth: 1))
                             )
                         if let e = jsonError {
                             Text(e).font(.caption).foregroundStyle(.red)
@@ -149,7 +150,7 @@ struct SettingsView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Settings")
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(.system(size: 20, weight: .bold, design: .rounded))
             Text("Paste your Cloudflare config and grant admin permission once.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -189,6 +190,7 @@ struct SettingsView: View {
 }
 
 struct LabeledField: View {
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let hint: String
     @Binding var text: String
@@ -212,10 +214,10 @@ struct LabeledField: View {
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.black.opacity(0.25))
+                        .fill(AppTheme.controlFill(for: colorScheme))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(.white.opacity(0.08), lineWidth: 1)
+                                .stroke(AppTheme.stroke(for: colorScheme), lineWidth: 1)
                         )
                 )
         }

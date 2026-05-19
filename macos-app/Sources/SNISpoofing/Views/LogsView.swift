@@ -2,12 +2,13 @@ import SwiftUI
 
 struct LogsView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Logs")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
                 Spacer()
                 Button("Clear") {
                     app.clearLogs()
@@ -27,8 +28,8 @@ struct LogsView: View {
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(.black.opacity(0.35))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.08)))
+                    .fill(AppTheme.controlFill(for: colorScheme))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.stroke(for: colorScheme)))
             )
         }
     }

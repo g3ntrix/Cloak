@@ -12,11 +12,11 @@ struct ListenerProjectConfig: Codable, Equatable {
 
     /// Values used by **Restore default** in Settings (full example config).
     static let factoryRestore = ListenerProjectConfig(
-        LISTEN_HOST: "127.0.0.1",
+        LISTEN_HOST: "0.0.0.0",
         LISTEN_PORT: 40443,
-        CONNECT_IP: "104.19.229.21",
+        CONNECT_IP: "188.114.98.0",
         CONNECT_PORT: 443,
-        FAKE_SNI: "hcaptcha.com"
+        FAKE_SNI: "auth.vercel.com"
     )
 
     /// Pretty JSON for the editor (empty CONNECT/FAKE placeholders).
