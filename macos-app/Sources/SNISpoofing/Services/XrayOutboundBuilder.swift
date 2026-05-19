@@ -13,9 +13,9 @@ enum XrayOutboundBuilder {
     }
 
     static func generate(settings: AppSettings, profile: Profile, bridge: ListenerProjectConfig) throws -> Data {
-        let dialHost = bridge.LISTEN_HOST.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dialHost = bridge.resolvedDialHost
         let dialPort = bridge.LISTEN_PORT
-        guard !dialHost.isEmpty, dialPort > 0, dialPort <= 65_535 else {
+        guard dialPort > 0, dialPort <= 65_535 else {
             throw BuildError.unsupported("Listener config: invalid LISTEN_HOST or LISTEN_PORT.")
         }
 

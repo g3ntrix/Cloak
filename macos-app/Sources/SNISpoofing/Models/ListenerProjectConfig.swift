@@ -48,6 +48,14 @@ struct ListenerProjectConfig: Codable, Equatable {
         return try JSONDecoder().decode(ListenerProjectConfig.self, from: data)
     }
 
+    /// Host Xray uses to reach the listener (bind address 0.0.0.0 is not dialable).
+    var resolvedDialHost: String {
+        let h = LISTEN_HOST.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if h.isEmpty || h == "0.0.0.0" || h == "*" { return "127.0.0.1" }
+        if h == "::" { return "::1" }
+        return LISTEN_HOST.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func encodeJSONString() throws -> String {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]

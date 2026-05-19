@@ -47,7 +47,8 @@ if not _fsn:
     sys.exit(1)
 CONNECT_IP = _cip
 FAKE_SNI = _fsn.encode()
-INTERFACE_IPV4 = get_default_interface_ipv4(CONNECT_IP)
+# Route to CONNECT_IP when possible; fall back to a public resolver if that fails.
+INTERFACE_IPV4 = get_default_interface_ipv4(CONNECT_IP) or get_default_interface_ipv4("8.8.8.8")
 INTERFACE_NAME = get_interface_name_by_ipv4(INTERFACE_IPV4)
 DATA_MODE = "tls"
 BYPASS_METHOD = "wrong_seq"
@@ -222,14 +223,15 @@ async def main():
 
 
 def run() -> None:
+    if not INTERFACE_IPV4:
+        print(
+            "error: could not determine a usable local IPv4 address. "
+            "Check your network connection and CONNECT_IP in Settings.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     fake_tcp_injector = FakeTcpInjector(INTERFACE_IPV4, CONNECT_IP, fake_injective_connections, INTERFACE_NAME)
     threading.Thread(target=fake_tcp_injector.run, args=(), daemon=True).start()
-    print("هشن شومافر تیامح دینکیم هدافتسا دازآ تنرتنیا هب یسرتسد یارب همانرب نیا زا رگا")
-    print(
-        "دراد امش تیامح هب زاین هک مراد رظن رد دازآ تنرتنیا هب ناریا مدرم مامت یسرتسد یارب یدایز یاه همانرب و اه هژورپ")
-    print("\n")
-    print("USDT (BEP20): 0x76a768B53Ca77B43086946315f0BDF21156bF424\n")
-    print("@patterniha")
     asyncio.run(main())
 
 
