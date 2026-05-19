@@ -2,13 +2,8 @@ import SwiftUI
 import AppKit
 
 struct AboutView: View {
-    @Environment(\.openURL) private var openURL
-
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
-    }
-    private var appBuild: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
 
     var body: some View {
@@ -17,7 +12,6 @@ struct AboutView: View {
                 hero
                 authorCard
                 donateCard
-                linksRow
             }
             .padding(.bottom, 4)
         }
@@ -40,9 +34,6 @@ struct AboutView: View {
                             .padding(.vertical, 2)
                             .background(Capsule().fill(Color.accentColor.opacity(0.16)))
                             .foregroundStyle(Color.accentColor)
-                        Text("build \(appBuild)")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.tertiary)
                     }
                     Text("A macOS proxy app that routes traffic through a local SNI-spoofing bridge and Xray to stay connected on restrictive networks.")
                         .font(.system(size: 12))
@@ -88,26 +79,6 @@ struct AboutView: View {
                 DonationRow(title: "TRX (TRON)",   address: "TFrCzU7bDey9WSh3fhqCBqhaiMzr8VhcUV")
             }
         }
-    }
-
-    private var linksRow: some View {
-        HStack(spacing: 12) {
-            linkChip("Telegram", systemImage: "paperplane.fill", url: "https://t.me/g3ntrix")
-            linkChip("Source", systemImage: "chevron.left.forwardslash.chevron.right", url: "https://github.com")
-            linkChip("Report issue", systemImage: "ant.fill", url: "https://github.com")
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func linkChip(_ label: String, systemImage: String, url: String) -> some View {
-        Button {
-            if let u = URL(string: url) { openURL(u) }
-        } label: {
-            Label(label, systemImage: systemImage)
-                .font(.system(size: 11, weight: .medium))
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
     }
 }
 

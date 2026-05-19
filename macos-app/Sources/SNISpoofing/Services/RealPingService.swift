@@ -15,6 +15,64 @@ enum RealPingService {
         let error: String?
     }
 
+    /// Measures TCP connect time to `targetHost:targetPort` through a local SOCKS5 proxy.
+    static func pingViaSocks(
+        proxyHost: String,
+        proxyPort: Int,
+        targetHost: String,
+        targetPort: UInt16 = 443,
+        timeout: TimeInterval = 12
+    ) async -> Result {
+        let proxy = socksEndpoint(host: proxyHost, port: proxyPort)
+        let host = targetHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return Result(millis: nil, error: "no server") }
+        let url = "https://\(host):\(targetPort)/"
+        return await Task.detached(priority: .utility) {
+            pingHTTPSViaCurl(socks: proxy, url: url, timeout: timeout)
+        }.value
+    }
+
+    private static func socksEndpoint(host: String, port: Int) -> String {
+        let t = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.contains(":"), t.filter({ $0 == "." }).count != 3 {
+            return "[\(t)]:\(port)"
+        }
+        return "\(t):\(port)"
+    }
+
+    private static func pingHTTPSViaCurl(socks: String, url: String, timeout: TimeInterval) -> Result {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        p.arguments = [
+            "-sS", "-o", "/dev/null",
+            "--connect-timeout", String(Int(timeout)),
+            "--max-time", String(Int(timeout) + 2),
+            "--socks5-hostname", socks,
+            "-w", "%{time_connect}",
+            url,
+        ]
+        let out = Pipe()
+        let err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        do {
+            try p.run()
+        } catch {
+            return Result(millis: nil, error: "curl")
+        }
+        p.waitUntilExit()
+        let stdout = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard p.terminationStatus == 0, let seconds = Double(stdout.trimmingCharacters(in: .whitespacesAndNewlines)),
+              seconds > 0 else {
+            let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if msg.localizedCaseInsensitiveContains("timeout") { return Result(millis: nil, error: "timeout") }
+            if msg.localizedCaseInsensitiveContains("refused") { return Result(millis: nil, error: "refused") }
+            return Result(millis: nil, error: msg.isEmpty ? "failed" : "failed")
+        }
+        return Result(millis: max(1, Int(seconds * 1000)), error: nil)
+    }
+
     static func ping(host: String, port: UInt16, timeout: TimeInterval = 10) async -> Result {
         guard !host.isEmpty, port > 0 else {
             return Result(millis: nil, error: "no server")

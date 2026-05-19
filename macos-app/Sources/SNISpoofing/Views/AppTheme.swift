@@ -76,4 +76,13 @@ enum AppTheme {
     static func cardShadow(for scheme: ColorScheme) -> Color {
         scheme == .dark ? Color.black.opacity(0.10) : Color.black.opacity(0.07)
     }
+
+    /// Connect button fill (flat, matches cards).
+    static func connectFill(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.accentColor.opacity(0.88) : Color.accentColor
+    }
+
+    static func connectShadow(for scheme: ColorScheme) -> Color {
+        Color.accentColor.opacity(scheme == .dark ? 0.35 : 0.22)
+    }
 }

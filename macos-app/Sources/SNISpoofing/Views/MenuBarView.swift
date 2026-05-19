@@ -89,18 +89,13 @@ struct MenuBarView: View {
                     Text(app.status.isRunning ? "Stop" : "Connect")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(app.status.isRunning ? .white : Color.primary.opacity(0.92))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
-                    Capsule().fill(
-                        LinearGradient(
-                            colors: app.status.isRunning
-                                ? [Color.red.opacity(0.9), Color.pink.opacity(0.9)]
-                                : [Color.accentColor, .purple],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                    )
+                    Capsule().fill(app.status.isRunning
+                                   ? Color.red.opacity(0.88)
+                                   : AppTheme.connectFill(for: colorScheme))
                 )
             }
             .buttonStyle(.plain)
@@ -176,7 +171,7 @@ struct MenuBarView: View {
     }
 
     private var actionsRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Button {
                 NSApp.activate(ignoringOtherApps: true)
                 let mainWindows = NSApp.windows.filter { $0.canBecomeMain && !$0.isExcludedFromWindowsMenu }
@@ -188,17 +183,20 @@ struct MenuBarView: View {
             } label: {
                 Label("Open", systemImage: "macwindow")
                     .font(.system(size: 11, weight: .medium))
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderless)
-            Spacer()
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
             Button(role: .destructive) {
                 NSApp.terminate(nil)
             } label: {
                 Text("Quit")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.red.opacity(0.85))
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
     }
 

@@ -48,7 +48,7 @@ struct LogsView: View {
                         .foregroundStyle(.secondary)
                     Text("Logs are off")
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Cloak doesn't capture anything when logs are off — keeps memory low and avoids noise. Flip the switch above when you need to diagnose a problem.")
+                    Text("Cloak doesn't capture anything when logs are off. Flip the switch above when you need to diagnose a problem.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

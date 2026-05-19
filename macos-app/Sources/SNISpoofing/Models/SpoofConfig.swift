@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Global app settings. Per-profile details live in `Profile`.
 struct AppSettings: Codable, Equatable {
@@ -20,6 +21,21 @@ struct AppSettings: Codable, Equatable {
     /// User can opt-in from Settings → Diagnostics.
     var logsEnabled: Bool = false
 
+    /// Light/dark appearance override. `.system` follows macOS.
+    var appearanceMode: AppearanceMode = .system
+
+    enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
+        case system, light, dark
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .system: return "System"
+            case .light: return "Light"
+            case .dark: return "Dark"
+            }
+        }
+    }
+
     enum LogLevel: String, Codable, CaseIterable, Identifiable {
         case trace, debug, info, warn, error, fatal, panic
         var id: String { rawValue }
@@ -34,7 +50,8 @@ struct AppSettings: Codable, Equatable {
         useSystemProxy: Bool = true,
         activeProfileID: UUID? = nil,
         logLevel: LogLevel = .warn,
-        logsEnabled: Bool = false
+        logsEnabled: Bool = false,
+        appearanceMode: AppearanceMode = .system
     ) {
         self.pythonProjectPath = pythonProjectPath
         self.listenHost = listenHost
@@ -43,12 +60,23 @@ struct AppSettings: Codable, Equatable {
         self.activeProfileID = activeProfileID
         self.logLevel = logLevel
         self.logsEnabled = logsEnabled
+        self.appearanceMode = appearanceMode
+    }
+
+    /// `true` when the SOCKS listener is exposed on all interfaces (LAN).
+    var exposesToLAN: Bool {
+        let h = listenHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return h == "0.0.0.0" || h == "*"
+    }
+
+    mutating func setExposesToLAN(_ enabled: Bool) {
+        listenHost = enabled ? "0.0.0.0" : "127.0.0.1"
     }
 
     enum CodingKeys: String, CodingKey {
         case pythonProjectPath, listenHost, listenPort
         case useSystemProxy
-        case activeProfileID, logLevel, logsEnabled
+        case activeProfileID, logLevel, logsEnabled, appearanceMode
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +88,7 @@ struct AppSettings: Codable, Equatable {
         activeProfileID = try c.decodeIfPresent(UUID.self, forKey: .activeProfileID)
         logLevel = try c.decodeIfPresent(LogLevel.self, forKey: .logLevel) ?? .warn
         logsEnabled = try c.decodeIfPresent(Bool.self, forKey: .logsEnabled) ?? false
+        appearanceMode = try c.decodeIfPresent(AppearanceMode.self, forKey: .appearanceMode) ?? .system
     }
 
     /// Host the **app** uses to talk to the local SOCKS (never `0.0.0.0` / “all interfaces”).
@@ -84,5 +113,14 @@ struct AppSettings: Codable, Equatable {
         }
         // Dev fallback.
         return "\(NSHomeDirectory())/Documents/Projects/SNI-Spoofing"
+    }
+
+    /// SwiftUI color scheme override, or `nil` to follow the system.
+    var preferredColorScheme: ColorScheme? {
+        switch appearanceMode {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
     }
 }

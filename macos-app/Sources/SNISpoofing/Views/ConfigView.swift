@@ -15,10 +15,10 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 header
 
+                appearanceCard
                 cloudflareCard
                 proxyCard
                 permissionsCard
-                diagnosticsCard
 
                 if showAdvanced {
                     advancedCard
@@ -43,6 +43,32 @@ struct SettingsView: View {
     }
 
     // MARK: - Sections
+
+    private var appearanceCard: some View {
+        Card {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "circle.lefthalf.filled")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.indigo)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Appearance")
+                        .font(.system(size: 13, weight: .semibold))
+                    AppearancePicker(mode: Binding(
+                        get: { app.settings.appearanceMode },
+                        set: {
+                            app.settings.appearanceMode = $0
+                            app.saveSettings()
+                        }
+                    ))
+                    Text("Choose light or dark, or follow your Mac's system setting.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -114,18 +140,27 @@ struct SettingsView: View {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 17))
                     .foregroundStyle(.cyan)
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Local SOCKS endpoint")
-                            .font(.system(size: 13, weight: .semibold))
-                        Spacer()
-                    }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("SOCKS listener")
+                        .font(.system(size: 13, weight: .semibold))
+                    ListenScopeToggle(exposesToLAN: Binding(
+                        get: { app.settings.exposesToLAN },
+                        set: { enabled in
+                            var s = app.settings
+                            s.setExposesToLAN(enabled)
+                            app.settings = s
+                            app.saveSettings()
+                            Task { await app.reconnectIfRunning() }
+                        }
+                    ))
                     HStack(spacing: 10) {
-                        compactField(label: "Host", text: proxyHostBinding, monospaced: true, width: 160)
                         compactField(label: "Port", text: proxyPortBinding, monospaced: true, width: 90)
+                        Text(verbatim: "→ \(app.settings.exposesToLAN ? "0.0.0.0" : "127.0.0.1"):\(app.settings.listenPort)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
                         Spacer()
                     }
-                    Text("Cloak's Xray listens here. Default 127.0.0.1:2080 keeps it on this Mac. Use 0.0.0.0 to share with other devices on your LAN.")
+                    Text("Local keeps the proxy on this Mac only. LAN lets other devices on your network use the same port.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -173,7 +208,7 @@ struct SettingsView: View {
                         }
                     }
                     Text(app.privilegesInstalled
-                         ? "Granted — connect and toggle the system proxy without a password prompt."
+                         ? "Granted. Connect and toggle the system proxy without a password prompt."
                          : "Cloak needs one-time admin permission to run the SNI listener and toggle the macOS SOCKS proxy.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -185,40 +220,6 @@ struct SettingsView: View {
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    private var diagnosticsCard: some View {
-        Card {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "stethoscope")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.purple)
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Diagnostics")
-                            .font(.system(size: 13, weight: .semibold))
-                        Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { app.settings.logsEnabled },
-                            set: {
-                                app.settings.logsEnabled = $0
-                                app.saveSettings()
-                                if !$0 { app.clearLogs() }
-                            }
-                        ))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                    }
-                    Text(app.settings.logsEnabled
-                         ? "Capturing xray + listener output in the Logs tab."
-                         : "Logs are off — keeps memory low and silences chatter. Flip on when something fails.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
@@ -281,16 +282,6 @@ struct SettingsView: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.stroke(for: colorScheme)))
                 )
         }
-    }
-
-    private var proxyHostBinding: Binding<String> {
-        Binding(
-            get: { app.settings.listenHost },
-            set: {
-                app.settings.listenHost = $0
-                app.saveSettings()
-            }
-        )
     }
 
     private var proxyPortBinding: Binding<String> {

@@ -16,9 +16,12 @@ struct ProfilesView: View {
     @State private var pingResults: [UUID: RealPingService.Result] = [:]
     @State private var pinging: Set<UUID> = []
     @State private var sortByPing = false
+    @State private var checkedIDs: Set<UUID> = []
+    @State private var selectionMode = false
 
     @State private var dropActive = false
     @State private var dropError: String?
+    @State private var showBulkDelete = false
 
     private var orderedProfiles: [Profile] {
         guard sortByPing else { return app.profiles }
@@ -71,6 +74,11 @@ struct ProfilesView: View {
                 pendingDelete = nil
             }
         }
+        .alert("Delete \(checkedIDs.count) profile\(checkedIDs.count == 1 ? "" : "s")?",
+               isPresented: $showBulkDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { deleteChecked() }
+        }
     }
 
     // MARK: - Sub-views
@@ -122,9 +130,28 @@ struct ProfilesView: View {
 
                 Spacer()
 
-                Text("Drop a .txt file anywhere to bulk-import.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                if selectionMode {
+                    Button("All") { checkedIDs = Set(app.profiles.map(\.id)) }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                    if !checkedIDs.isEmpty {
+                        Button("Delete (\(checkedIDs.count))", role: .destructive) {
+                            showBulkDelete = true
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    Button("Done") {
+                        selectionMode = false
+                        checkedIDs.removeAll()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Button("Select") { selectionMode = true }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                }
             }
         }
     }
@@ -140,11 +167,21 @@ struct ProfilesView: View {
                         ProfileRow(
                             profile: p,
                             isActive: app.settings.activeProfileID == p.id,
+                            isChecked: checkedIDs.contains(p.id),
+                            selectionMode: selectionMode,
                             isRenaming: renaming == p.id,
                             renameDraft: $renameDraft,
                             pingResult: pingResults[p.id],
                             isPinging: pinging.contains(p.id),
-                            onActivate: { app.setActive(p.id) },
+                            onActivate: {
+                                guard renaming != p.id else { return }
+                                if selectionMode {
+                                    toggleChecked(p.id)
+                                } else {
+                                    app.setActive(p.id)
+                                }
+                            },
+                            onToggleCheck: { toggleChecked(p.id) },
                             onPing: { Task { @MainActor in await pingOne(p) } },
                             onStartRename: {
                                 renameDraft = p.name
@@ -245,19 +282,34 @@ struct ProfilesView: View {
         }
     }
 
-    // MARK: - Ping helpers (unchanged from previous version)
+    // MARK: - Selection
 
-    private static func directPing(for p: Profile) async -> RealPingService.Result {
-        let host = p.server.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty else { return RealPingService.Result(millis: nil, error: "no server") }
-        guard p.serverPort > 0, p.serverPort <= 65_535 else { return RealPingService.Result(millis: nil, error: "bad port") }
-        return await RealPingService.ping(host: host, port: UInt16(clamping: p.serverPort))
+    @MainActor
+    private func toggleChecked(_ id: UUID) {
+        if checkedIDs.contains(id) {
+            checkedIDs.remove(id)
+        } else {
+            checkedIDs.insert(id)
+        }
     }
 
     @MainActor
+    private func deleteChecked() {
+        for id in checkedIDs {
+            app.delete(profileID: id)
+            pingResults.removeValue(forKey: id)
+        }
+        checkedIDs.removeAll()
+        selectionMode = false
+    }
+
+    // MARK: - Ping (listener + xray through SOCKS)
+
+    @MainActor
     private func pingOne(_ p: Profile) async {
-        _ = pinging.insert(p.id)
-        pingResults[p.id] = await Self.directPing(for: p)
+        guard !pinging.contains(p.id) else { return }
+        pinging.insert(p.id)
+        pingResults[p.id] = await app.pingProfile(p)
         pinging.remove(p.id)
     }
 
@@ -265,18 +317,8 @@ struct ProfilesView: View {
     private func pingAll() async {
         let toPing = app.profiles
         guard !toPing.isEmpty else { return }
-        pinging = Set(toPing.map(\.id))
-        await withTaskGroup(of: (UUID, RealPingService.Result).self) { group in
-            for p in toPing {
-                group.addTask {
-                    let r = await Self.directPing(for: p)
-                    return (p.id, r)
-                }
-            }
-            for await (id, r) in group {
-                pingResults[id] = r
-                pinging.remove(id)
-            }
+        for p in toPing {
+            await pingOne(p)
         }
     }
 }
@@ -287,11 +329,14 @@ private struct ProfileRow: View {
     @Environment(\.colorScheme) private var colorScheme
     let profile: Profile
     let isActive: Bool
+    let isChecked: Bool
+    let selectionMode: Bool
     let isRenaming: Bool
     @Binding var renameDraft: String
     let pingResult: RealPingService.Result?
     let isPinging: Bool
     let onActivate: () -> Void
+    let onToggleCheck: () -> Void
     let onPing: () -> Void
     let onStartRename: () -> Void
     let onCommitRename: () -> Void
@@ -301,6 +346,11 @@ private struct ProfileRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            if selectionMode {
+                Toggle("", isOn: Binding(get: { isChecked }, set: { _ in onToggleCheck() }))
+                    .toggleStyle(.checkbox)
+                    .labelsHidden()
+            }
             kindBadge
 
             VStack(alignment: .leading, spacing: 2) {
@@ -339,9 +389,7 @@ private struct ProfileRow: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isActive
-                      ? Color.accentColor.opacity(0.14)
-                      : (hover ? AppTheme.hoverFill(for: colorScheme) : AppTheme.subtleFill(for: colorScheme)))
+                .fill(rowFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(isActive ? Color.accentColor.opacity(0.45) : AppTheme.faintStroke(for: colorScheme),
@@ -349,9 +397,15 @@ private struct ProfileRow: View {
                 )
         )
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { onStartRename() }
         .onTapGesture { if !isRenaming { onActivate() } }
         .onHover { hover = $0 }
+    }
+
+    private var rowFill: Color {
+        if isActive { return Color.accentColor.opacity(0.14) }
+        if isChecked { return Color.accentColor.opacity(0.08) }
+        if hover { return AppTheme.hoverFill(for: colorScheme) }
+        return AppTheme.subtleFill(for: colorScheme)
     }
 
     private var kindBadge: some View {
@@ -417,7 +471,7 @@ private struct PingChip: View {
             )
         }
         .buttonStyle(.plain)
-        .help(result?.error ?? "TCP ping (works while disconnected)")
+        .help(result?.error ?? "Route through this profile and measure latency")
     }
 
     private func color(for ms: Int) -> Color {
@@ -502,7 +556,7 @@ private struct ImportSheet: View {
                         .background(Capsule().fill(Color.cyan.opacity(0.15)))
                 }
             }
-            Text("Paste one or more trojan:// / vless:// / vmess:// / ss:// links — one per line, or all on one line, Cloak doesn't care.")
+            Text("Paste one or more trojan:// / vless:// / vmess:// / ss:// links. One per line or all on one line.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 

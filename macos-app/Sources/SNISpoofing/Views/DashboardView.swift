@@ -12,14 +12,14 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 14) {
                 statusCard
                 meterCard
-                HStack(alignment: .top, spacing: 14) {
-                    egressCard.frame(maxWidth: .infinity, alignment: .top)
-                    proxyEndpointCard.frame(maxWidth: .infinity, alignment: .top)
-                }
                 if let lan = lanIPv4 {
-                    lanCard(lan)
+                    HStack(alignment: .top, spacing: 14) {
+                        lanCard(lan).frame(maxWidth: .infinity, alignment: .top)
+                        SystemProxyCard().frame(maxWidth: .infinity, alignment: .top)
+                    }
+                } else {
+                    SystemProxyCard()
                 }
-                SystemProxyCard()
             }
             .padding(.bottom, 4)
         }
@@ -36,9 +36,9 @@ struct DashboardView: View {
 
     private var statusCard: some View {
         Card {
-            HStack(spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
                 StatusOrb(status: app.status)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(app.status.label)
                         .font(.system(size: 19, weight: .semibold))
                         .lineLimit(1)
@@ -46,8 +46,9 @@ struct DashboardView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                    ipRow
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 PowerButton(isRunning: app.status.isRunning,
                             isBusy: app.status.isTransitioning) {
                     Task {
@@ -59,6 +60,48 @@ struct DashboardView: View {
                 .opacity(app.activeProfile == nil && !app.status.isRunning ? 0.5 : 1)
             }
         }
+    }
+
+    @ViewBuilder
+    private var ipRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: app.status.isRunning ? "globe.americas.fill" : "network")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(app.status.isRunning ? .mint : .blue)
+            if let ip = app.status.isRunning ? app.egressIP : app.directIP {
+                Text(verbatim: ip)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .textSelection(.enabled)
+                if let cc = app.status.isRunning ? app.egressCountry : app.directCountry, !cc.isEmpty {
+                    Text(countryLine(code: cc))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            } else if let msg = app.status.isRunning ? app.egressLookupMessage : app.directLookupMessage {
+                Text(msg)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                Text("Resolving…")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            Button {
+                app.status.isRunning ? app.refreshEgressNow() : app.refreshDirectIP()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.borderless)
+            .help("Refresh IP")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
     }
 
     // MARK: - Compact bandwidth meter (one card, one row)
@@ -140,75 +183,6 @@ struct DashboardView: View {
         max(app.downloadBytesPerSec, app.uploadBytesPerSec, 64 * 1024)  // ~512 kbps floor so we don't draw a full bar at idle
     }
 
-    // MARK: - Egress + proxy endpoint cards
-
-    private var egressCard: some View {
-        Card {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: app.status.isRunning ? "globe" : "wifi")
-                    .font(.system(size: 17))
-                    .foregroundStyle(app.status.isRunning ? .mint : .blue)
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Text(app.status.isRunning ? "Egress" : "Direct internet")
-                            .font(.system(size: 12, weight: .semibold))
-                        Spacer()
-                        Button { app.status.isRunning ? app.refreshEgressNow() : app.refreshDirectIP() } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Refresh")
-                    }
-                    if let ip = app.status.isRunning ? app.egressIP : app.directIP {
-                        Text(verbatim: ip)
-                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                            .lineLimit(1)
-                            .textSelection(.enabled)
-                    } else if let msg = app.status.isRunning ? app.egressLookupMessage : app.directLookupMessage {
-                        Text(msg)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    } else {
-                        Text(verbatim: "—").foregroundStyle(.secondary)
-                    }
-                    if let cc = app.status.isRunning ? app.egressCountry : app.directCountry, !cc.isEmpty {
-                        Text(countryLine(code: cc))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    private var proxyEndpointCard: some View {
-        Card {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.cyan)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Local SOCKS")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(verbatim: "\(app.settings.listenHost):\(app.settings.listenPort)")
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .textSelection(.enabled)
-                    Text(app.status.isRunning
-                         ? (app.settings.useSystemProxy
-                            ? "System proxy is on — every app on this Mac uses Cloak."
-                            : "Apps must point at this endpoint to use Cloak.")
-                         : "Click Connect to flip the system proxy on.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
     // MARK: - LAN IP
 
     private func lanCard(_ ip: String) -> some View {
@@ -218,14 +192,14 @@ struct DashboardView: View {
                     .font(.system(size: 17))
                     .foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("This Mac on LAN")
+                    Text("LAN address")
                         .font(.system(size: 12, weight: .semibold))
                     Text(verbatim: "\(ip):\(app.settings.listenPort)")
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
                         .textSelection(.enabled)
                     Text(bindsAllInterfaces
-                         ? "Other devices on this network can point their SOCKS proxy here."
-                         : "Set the listener Host to 0.0.0.0 in Settings to expose it to other devices.")
+                         ? "Other devices on your network can use this SOCKS endpoint."
+                         : "Enable LAN in Settings to share the proxy with other devices.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -289,9 +263,9 @@ struct DashboardView: View {
         case .stopped:
             return app.activeProfile == nil
                 ? "No profile selected. Import or pick one from Profiles."
-                : "Active profile: \(app.activeProfile?.name ?? "—")"
+                : "Profile: \(app.activeProfile?.name ?? "none")"
         case .running:
-            return "Active profile: \(app.activeProfile?.name ?? "—")"
+            return "Profile: \(app.activeProfile?.name ?? "none")"
         case .starting: return "Bringing up the bridge and Xray…"
         case .stopping: return "Tearing down."
         case .error(let msg): return msg
@@ -368,17 +342,19 @@ struct StatusOrb: View {
 }
 
 struct PowerButton: View {
+    @Environment(\.colorScheme) private var colorScheme
     let isRunning: Bool
     let isBusy: Bool
     let action: () -> Void
     @State private var hover = false
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 if isBusy {
                     ProgressView().controlSize(.small)
                         .progressViewStyle(.circular)
-                        .tint(.white)
+                        .tint(isRunning ? .white : .primary)
                 } else {
                     Image(systemName: isRunning ? "stop.fill" : "power")
                         .font(.system(size: 13, weight: .bold))
@@ -386,23 +362,20 @@ struct PowerButton: View {
                 Text(isRunning ? "Disconnect" : "Connect")
                     .font(.system(size: 13, weight: .semibold))
             }
-            .foregroundColor(.white)
+            .foregroundColor(isRunning ? .white : Color.primary.opacity(0.9))
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: isRunning
-                                ? [Color.red.opacity(0.85), Color.pink.opacity(0.85)]
-                                : [Color.accentColor, .purple],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(color: (isRunning ? Color.red : Color.accentColor).opacity(hover ? 0.5 : 0.25),
-                            radius: hover ? 14 : 8, y: 4)
+                    .fill(isRunning
+                          ? Color.red.opacity(0.88)
+                          : AppTheme.connectFill(for: colorScheme))
+                    .shadow(color: isRunning
+                            ? Color.red.opacity(hover ? 0.35 : 0.2)
+                            : AppTheme.connectShadow(for: colorScheme),
+                            radius: hover ? 10 : 6, y: 3)
             )
-            .scaleEffect(hover ? 1.03 : 1.0)
+            .scaleEffect(hover ? 1.02 : 1.0)
             .animation(.easeOut(duration: 0.15), value: hover)
         }
         .buttonStyle(.plain)
@@ -448,7 +421,7 @@ struct SystemProxyCard: View {
                     .foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Capture all system traffic")
+                        Text("System proxy")
                             .font(.system(size: 12, weight: .semibold))
                         Spacer()
                         Toggle("", isOn: Binding(
@@ -463,8 +436,8 @@ struct SystemProxyCard: View {
                         .labelsHidden()
                     }
                     Text(app.settings.useSystemProxy
-                         ? "On Connect, Cloak flips the macOS SOCKS proxy to its local listener so every app routes through it."
-                         : "Off — apps have to point at the local SOCKS endpoint themselves.")
+                         ? "On Connect, macOS routes all apps through Cloak's local SOCKS listener."
+                         : "Off. Apps must point at the local SOCKS endpoint manually.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

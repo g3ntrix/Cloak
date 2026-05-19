@@ -258,7 +258,7 @@ final class AppState: ObservableObject {
         saveListenerProject()
 
         guard let profile = activeProfile else {
-            status = .error("No profile selected — import one in Profiles.")
+            status = .error("No profile selected. Import one in Profiles.")
             return
         }
 
@@ -266,7 +266,7 @@ final class AppState: ObservableObject {
         case .vless, .trojan:
             break
         case .vmess, .shadowsocks:
-            status = .error("This profile type isn't supported yet — use a VLESS or Trojan config.")
+            status = .error("This profile type isn't supported yet. Use a VLESS or Trojan config.")
             return
         }
 
@@ -414,7 +414,7 @@ final class AppState: ObservableObject {
         lastSampleAt = now
     }
 
-    // MARK: - Profiles ping (listener-only)
+    // MARK: - Profile ping (listener + xray through SOCKS)
 
     /// TCP target for probing `LISTEN_HOST` (NWConnection cannot use `0.0.0.0`).
     static func resolvedPingHost(_ raw: String) -> String {
@@ -425,42 +425,97 @@ final class AppState: ObservableObject {
         return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Starts the Python listener if needed so ping can reach `LISTEN_HOST`/`LISTEN_PORT`.
-    func prepareListenerForPing() async throws {
-        if status.isRunning { return }
-        saveListenerProject()
-        if !SudoPrivilege.isInstalled() {
-            try SudoPrivilege.install()
-            privilegesInstalled = true
+    /// Brings up the Python listener and Xray for `profile`, measures latency through
+    /// the local SOCKS hop, then tears down anything started only for this probe.
+    func pingProfile(_ profile: Profile) async -> RealPingService.Result {
+        switch profile.kind {
+        case .vless, .trojan: break
+        case .vmess, .shadowsocks:
+            return RealPingService.Result(millis: nil, error: "unsupported")
         }
-        let projectURL = URL(fileURLWithPath: settings.resolvedPythonProjectPath, isDirectory: true)
-        let startedNow: Bool
-        if python.isRunning() {
-            startedNow = false
-        } else {
-            try python.start(projectDirectory: projectURL, config: listenerProject)
-            listenerStartedForPingOnly = true
-            startedNow = true
+
+        let targetHost: String = {
+            let sni = profile.tls.serverName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sni.isEmpty { return sni }
+            return profile.server.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+        guard !targetHost.isEmpty else {
+            return RealPingService.Result(millis: nil, error: "no server")
         }
-        try await awaitListenerReady()
-        if startedNow {
-            python.stop()
-            listenerStartedForPingOnly = false
+        let targetPort: UInt16 = {
+            let sni = profile.tls.serverName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sni.isEmpty { return 443 }
+            guard profile.serverPort > 0, profile.serverPort <= 65_535 else { return 0 }
+            return UInt16(clamping: profile.serverPort)
+        }()
+        guard targetPort > 0 else {
+            return RealPingService.Result(millis: nil, error: "bad port")
         }
-        throw NSError(
-            domain: "SNISpoofing",
-            code: 30,
-            userInfo: [NSLocalizedDescriptionKey: "Listener did not accept connections in time. Check Settings → Cloudflare JSON (LISTEN_HOST / LISTEN_PORT)."]
-        )
+
+        let socksHost = settings.resolvedSocksHostForLocalClient
+        let socksPort = settings.listenPort
+
+        if status.isRunning {
+            guard activeProfile?.id == profile.id else {
+                return RealPingService.Result(millis: nil, error: "disconnect first")
+            }
+            return await RealPingService.pingViaSocks(
+                proxyHost: socksHost,
+                proxyPort: socksPort,
+                targetHost: targetHost,
+                targetPort: targetPort
+            )
+        }
+
+        var startedListener = false
+        var startedXray = false
+        defer {
+            if startedXray { xray.stopSync() }
+            if startedListener {
+                python.stop()
+                listenerStartedForPingOnly = false
+            }
+        }
+
+        do {
+            saveListenerProject()
+            if !SudoPrivilege.isInstalled() {
+                try SudoPrivilege.install()
+                privilegesInstalled = true
+            }
+            let projectURL = URL(fileURLWithPath: settings.resolvedPythonProjectPath, isDirectory: true)
+            if !python.isRunning() {
+                try python.start(projectDirectory: projectURL, config: listenerProject)
+                listenerStartedForPingOnly = true
+                startedListener = true
+            }
+            try await awaitListenerReady()
+
+            let xdata = try XrayOutboundBuilder.generate(
+                settings: settings,
+                profile: profile,
+                bridge: listenerProject
+            )
+            let cfgURL = try store.writeGeneratedXrayConfig(xdata)
+            try xray.start(configURL: cfgURL)
+            startedXray = true
+            try await Task.sleep(nanoseconds: 450_000_000)
+
+            return await RealPingService.pingViaSocks(
+                proxyHost: socksHost,
+                proxyPort: socksPort,
+                targetHost: targetHost,
+                targetPort: targetPort
+            )
+        } catch {
+            return RealPingService.Result(millis: nil, error: shortPingError(error))
+        }
     }
 
-    /// Stops the listener if this session started it for ping only.
-    func endPingListenerIfNeeded() {
-        guard listenerStartedForPingOnly else { return }
-        listenerStartedForPingOnly = false
-        if !status.isRunning {
-            python.stop()
-        }
+    private func shortPingError(_ error: Error) -> String {
+        let msg = error.localizedDescription
+        if msg.count > 48 { return String(msg.prefix(45)) + "…" }
+        return msg.isEmpty ? "failed" : msg
     }
 
     private func awaitListenerReady() async throws {

@@ -14,6 +14,7 @@ struct SNISpoofingApp: App {
         Window("Cloak", id: Self.mainWindowID) {
             ContentView()
                 .environmentObject(appState)
+                .preferredColorScheme(appState.settings.preferredColorScheme)
                 .frame(minWidth: 900, minHeight: 580)
                 .onAppear { appDelegate.appState = appState }
         }
@@ -26,6 +27,7 @@ struct SNISpoofingApp: App {
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(appState)
+                .preferredColorScheme(appState.settings.preferredColorScheme)
         } label: {
             MenuBarLabel(status: appState.status)
         }
