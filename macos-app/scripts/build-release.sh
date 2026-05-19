@@ -31,13 +31,16 @@ else
   echo "=== 1) assets: skipped (SKIP_ASSETS=1) ==="
 fi
 
-echo "=== 2) Build universal Cloak.app ==="
+echo "=== 2) Build frozen listener (PyInstaller) ==="
+REQUIRE_UNIVERSAL="${REQUIRE_UNIVERSAL:-1}" "$SCRIPTS_DIR/build-core.sh"
+
+echo "=== 3) Build universal Cloak.app ==="
 SKIP_SPM_CLEAN="${SKIP_SPM_CLEAN:-0}" \
 BUILD_VARIANT=universal \
 VERSION="$VERSION" \
   "$SCRIPTS_DIR/build-app.sh"
 
-echo "=== 3) Package DMG ==="
+echo "=== 4) Package DMG ==="
 VERSION="$VERSION" "$SCRIPTS_DIR/make-dmg.sh"
 
 echo

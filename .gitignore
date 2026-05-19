@@ -226,6 +226,11 @@ macos-app/bundle/xray/xray
 macos-app/bundle/xray/geoip.dat
 macos-app/bundle/xray/geosite.dat
 
+# PyInstaller listener cores + build tree
+macos-app/bundle/cloak-core-*
+macos-app/.core-build/
+macos-app/vendor/
+
 
 #temp
 .temp/

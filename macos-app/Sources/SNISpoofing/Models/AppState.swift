@@ -272,7 +272,6 @@ final class AppState: ObservableObject {
             return
         }
 
-        let projectURL = URL(fileURLWithPath: settings.resolvedPythonProjectPath, isDirectory: true)
 
         let want = settings.listenPort
         let free = PortAvailability.firstAvailable(
@@ -294,10 +293,7 @@ final class AppState: ObservableObject {
                 privilegesInstalled = true
             }
 
-            try python.start(
-                projectDirectory: projectURL,
-                config: listenerProject
-            )
+            try python.start(config: listenerProject)
 
             try await awaitListenerReady()
 
@@ -519,9 +515,8 @@ final class AppState: ObservableObject {
             try SudoPrivilege.install()
             privilegesInstalled = true
         }
-        let projectURL = URL(fileURLWithPath: settings.resolvedPythonProjectPath, isDirectory: true)
         if !python.isRunning() {
-            try python.start(projectDirectory: projectURL, config: listenerProject)
+            try python.start(config: listenerProject)
             listenerStartedForPingOnly = true
         }
     }
@@ -591,9 +586,8 @@ final class AppState: ObservableObject {
                 try SudoPrivilege.install()
                 privilegesInstalled = true
             }
-            let projectURL = URL(fileURLWithPath: settings.resolvedPythonProjectPath, isDirectory: true)
             if !python.isRunning() {
-                try python.start(projectDirectory: projectURL, config: listenerProject)
+                try python.start(config: listenerProject)
                 listenerStartedForPingOnly = true
                 startedListener = true
             }

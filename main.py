@@ -221,7 +221,7 @@ async def main():
         asyncio.create_task(handle(incoming_sock, addr))
 
 
-if __name__ == "__main__":
+def run() -> None:
     fake_tcp_injector = FakeTcpInjector(INTERFACE_IPV4, CONNECT_IP, fake_injective_connections, INTERFACE_NAME)
     threading.Thread(target=fake_tcp_injector.run, args=(), daemon=True).start()
     print("هشن شومافر تیامح دینکیم هدافتسا دازآ تنرتنیا هب یسرتسد یارب همانرب نیا زا رگا")
@@ -231,3 +231,7 @@ if __name__ == "__main__":
     print("USDT (BEP20): 0x76a768B53Ca77B43086946315f0BDF21156bF424\n")
     print("@patterniha")
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

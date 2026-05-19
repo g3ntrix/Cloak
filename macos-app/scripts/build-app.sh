@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds SwiftPM Cloak.app variant(s), embeds Xray-core + geo data.
+# Builds SwiftPM Cloak.app variant(s), embeds Xray-core + PyInstaller listener.
 #
 # Outputs under macos-app/dist/ (default BUILD_VARIANT=universal):
 #   Cloak-arm64.app   — Apple Silicon only
@@ -70,6 +70,12 @@ if [[ -x "$ROOT/scripts/make-icns.sh" && -f "$ROOT/logo/Cloak.png" ]]; then
 fi
 
 ensure_release_assets
+
+# Frozen listener binaries (PyInstaller). Build if missing.
+if [[ ! -x "$ROOT/bundle/cloak-core-arm64" && ! -x "$ROOT/bundle/cloak-core-x86_64" ]]; then
+  echo "→ cloak-core missing; building with PyInstaller"
+  "$ROOT/scripts/build-core.sh"
+fi
 
 echo "→ swift build (arm64)"
 swift build --package-path "$ROOT" -c release \
@@ -149,35 +155,23 @@ assemble_one() {
     cp "$ROOT/Sources/SNISpoofing/Resources/Cloak.png" "$APP/Contents/Resources/Cloak.png"
   fi
 
-  # Embed the SNI-spoofing Python source so the app is self-contained.
-  # Users no longer need to point at an external project folder.
-  PY_SRC="$APP/Contents/Resources/python"
-  mkdir -p "$PY_SRC"
-  for f in main.py fake_tcp.py injecter.py monitor_connection.py; do
-    [[ -f "$ROOT/../$f" ]] && cp "$ROOT/../$f" "$PY_SRC/$f"
+  # PyInstaller-frozen listener (per-arch; do not lipo — see build-core.sh).
+  CORE_COPIED=0
+  for arch in arm64 x86_64; do
+    src="$ROOT/bundle/cloak-core-$arch"
+    if [[ -x "$src" ]]; then
+      cp "$src" "$APP/Contents/Resources/cloak-core-$arch"
+      chmod +x "$APP/Contents/Resources/cloak-core-$arch"
+      CORE_COPIED=$((CORE_COPIED + 1))
+    fi
   done
-  if [[ -d "$ROOT/../utils" ]]; then
-    rm -rf "$PY_SRC/utils"
-    cp -R "$ROOT/../utils" "$PY_SRC/utils"
-    find "$PY_SRC/utils" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
-  fi
-  if [[ -f "$ROOT/../requirements.txt" ]]; then
-    cp "$ROOT/../requirements.txt" "$PY_SRC/requirements.txt"
-  fi
-
-  # Bundle scapy wheel from macos-app/assets (offline release builds — no pip at build time).
-  WHEELHOUSE_ASSETS="$ROOT/assets"
-  WHEELHOUSE_DST="$PY_SRC/wheelhouse"
-  rm -rf "$WHEELHOUSE_DST"
-  mkdir -p "$WHEELHOUSE_DST"
-  if compgen -G "$WHEELHOUSE_ASSETS/scapy-*.whl" >/dev/null; then
-    cp "$WHEELHOUSE_ASSETS"/scapy-*.whl "$WHEELHOUSE_DST/"
-  else
-    echo "error: missing scapy wheel in $WHEELHOUSE_ASSETS/scapy-*.whl" >&2
-    echo "Run: ./macos-app/scripts/fetch-release-assets.sh" >&2
+  if [[ "$CORE_COPIED" -eq 0 ]]; then
+    echo "error: no cloak-core-* binaries in $ROOT/bundle/ — run scripts/build-core.sh" >&2
     exit 1
   fi
-
+  if [[ "$CORE_COPIED" -lt 2 ]]; then
+    echo "⚠︎  only $CORE_COPIED/2 listener cores embedded — app will not run on the missing architecture"
+  fi
 
   cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -211,6 +205,15 @@ PLIST
     --entitlements "$ENTITLEMENTS" \
     --timestamp=none \
     "$APP/Contents/Resources/xray"
+  for arch in arm64 x86_64; do
+    bin="$APP/Contents/Resources/cloak-core-$arch"
+    [[ -e "$bin" ]] || continue
+    codesign --force --sign - \
+      --options runtime \
+      --entitlements "$ENTITLEMENTS" \
+      --timestamp=none \
+      "$bin"
+  done
   codesign --force --sign - \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \

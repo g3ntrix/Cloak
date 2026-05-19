@@ -6,19 +6,19 @@ import AppKit
 /// password prompt on every action.
 ///
 /// Helpers (all root-owned, scoped to specific scripts in the sudoers rule):
-///   - `/usr/local/bin/cloak-listener` — runs the bundled Python SNI listener.
+///   - `/usr/local/bin/cloak-listener` — runs the bundled PyInstaller SNI listener.
 ///   - `/usr/local/bin/cloak-proxy`    — enables/disables the macOS system SOCKS proxy.
 enum SudoPrivilege {
     static let sudoersPath = "/etc/sudoers.d/cloak"
     static let wrapperPath = "/usr/local/bin/cloak-listener"
     static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
     /// Bumped whenever any embedded script changes — forces re-install.
-    static let wrapperVersion = "6"
+    static let wrapperVersion = "8"
 
     enum SudoError: LocalizedError {
         case promptCancelled
         case installFailed(String)
-        case missingPython
+        case missingListenerCore
 
         var errorDescription: String? {
             switch self {
@@ -26,8 +26,8 @@ enum SudoPrivilege {
                 return "Admin permission was cancelled. Cloak needs it once to set up its background helpers."
             case .installFailed(let msg):
                 return "Setup failed: \(msg)"
-            case .missingPython:
-                return "No system Python 3 found. Install Xcode Command Line Tools (`xcode-select --install`)."
+            case .missingListenerCore:
+                return "Bundled listener binary is missing. Reinstall Cloak from a full release build."
             }
         }
     }
@@ -101,10 +101,11 @@ enum SudoPrivilege {
 
     /// Prompts once for an admin password and installs both helpers + the sudoers rule.
     static func install() throws {
-        guard let pythonPath = systemPython() else { throw SudoError.missingPython }
+        guard let corePath = ListenerCore.bundledExecutablePath() else {
+            throw SudoError.missingListenerCore
+        }
 
         let user = NSUserName()
-        let projectDir = AppSettings.default.resolvedPythonProjectPath
         let configPath = appSupportListenerConfigPath()
 
         let listenerScript = """
@@ -117,33 +118,18 @@ enum SudoPrivilege {
         if [ "${1:-}" = "--wrapper-version" ]; then echo "\(wrapperVersion)"; exit 0; fi
         if [ "${1:-}" = "--kill-leftover" ]; then
           /usr/bin/pkill -f \(wrapperPath) >/dev/null 2>&1 || true
-          /usr/bin/pkill -f \"\(projectDir)/main.py\" >/dev/null 2>&1 || true
+          /usr/bin/pkill -f cloak-core- >/dev/null 2>&1 || true
           exit 0
         fi
+        CORE=\"\(corePath)\"
+        if [ ! -x \"$CORE\" ]; then
+          echo \"error: bundled listener missing at $CORE — reinstall Cloak.\" >&2
+          exit 12
+        fi
         export CLOAK_CONFIG=\"\(configPath)\"
-        cd \"\(projectDir)\"
-        WHEEL_DIR=\"\(projectDir)/wheelhouse\"
-        # Ensure macOS packet capture dependency exists.
-        if ! \"\(pythonPath)\" -c 'import scapy' >/dev/null 2>&1; then
-          \"\(pythonPath)\" -m ensurepip --upgrade >/dev/null 2>&1 || true
-          if [ ! -d \"$WHEEL_DIR\" ] || ! ls \"$WHEEL_DIR\"/scapy-*.whl >/dev/null 2>&1; then
-            echo \"error: bundled scapy wheel missing. Rebuild release so wheelhouse is included.\" >&2
-            exit 12
-          fi
-          \"\(pythonPath)\" -m pip install -q --disable-pip-version-check --no-index --find-links \"$WHEEL_DIR\" scapy >/dev/null 2>&1 || {
-            echo \"error: scapy install from bundled wheel failed.\" >&2
-            exit 12
-          }
-          \"\(pythonPath)\" -c 'import scapy' >/dev/null 2>&1 || {
-            echo \"error: scapy import failed after wheel install.\" >&2
-            exit 12
-          }
-        fi
-        if ! \"\(pythonPath)\" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
-          echo \"error: Python 3.8+ is required (found $(\"\(pythonPath)\" -V 2>&1)). Install Command Line Tools or Homebrew python3.\" >&2
-          exit 11
-        fi
-        exec \"\(pythonPath)\" \"\(projectDir)/main.py\" \"$@\"
+        export PYTHONUNBUFFERED=1
+        export HOME=\"\(NSHomeDirectory())\"
+        exec \"$CORE\" \"$@\"
         """
 
         let proxyScript = """
@@ -250,21 +236,7 @@ enum SudoPrivilege {
         }
     }
 
-    /// Returns the absolute path to a usable Python 3, or nil if none.
-    static func systemPython() -> String? {
-        let candidates = [
-            "/usr/bin/python3",
-            "/opt/homebrew/bin/python3",
-            "/usr/local/bin/python3"
-        ]
-        let fm = FileManager.default
-        for c in candidates where fm.isExecutableFile(atPath: c) {
-            return c
-        }
-        return nil
-    }
-
-    /// Writable config path the wrapper passes to the Python listener.
+    /// Writable config path the wrapper passes to the listener.
     static func appSupportListenerConfigPath() -> String {
         let fm = FileManager.default
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

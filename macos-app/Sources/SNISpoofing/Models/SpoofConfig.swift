@@ -99,20 +99,15 @@ struct AppSettings: Codable, Equatable {
         return listenHost.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Auto-detects the Python source directory: bundled first, then fallback.
+    /// Legacy dev override for an external Python tree (unused by the shipped frozen listener).
     var resolvedPythonProjectPath: String {
         if let p = pythonProjectPath?.trimmingCharacters(in: .whitespacesAndNewlines), !p.isEmpty {
             return p
         }
-        // Prefer Python source bundled inside the app.
         if let res = Bundle.main.resourcePath {
-            let bundled = (res as NSString).appendingPathComponent("python")
-            if FileManager.default.fileExists(atPath: (bundled as NSString).appendingPathComponent("main.py")) {
-                return bundled
-            }
+            return res
         }
-        // Dev fallback.
-        return "\(NSHomeDirectory())/Documents/Projects/SNI-Spoofing"
+        return "\(NSHomeDirectory())/Documents/Projects/Cloak"
     }
 
     /// SwiftUI color scheme override, or `nil` to follow the system.

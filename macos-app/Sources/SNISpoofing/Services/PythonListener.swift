@@ -13,16 +13,11 @@ final class PythonListener {
         process?.isRunning == true
     }
 
-    func start(projectDirectory: URL, config: ListenerProjectConfig) throws {
+    func start(config: ListenerProjectConfig) throws {
         stop()
 
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: projectDirectory.path) else {
-            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Internal error: Python listener source not found. Reinstall the app."])
-        }
-        let mainPy = projectDirectory.appendingPathComponent("main.py")
-        guard fm.fileExists(atPath: mainPy.path) else {
-            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Internal error: main.py missing. Reinstall the app."])
+        guard ListenerCore.bundledExecutableURL() != nil else {
+            throw NSError(domain: "SNISpoofing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Bundled listener binary is missing. Reinstall Cloak from a full release build."])
         }
 
         // Write config.json next to main.py so the listener can read it.
@@ -34,14 +29,14 @@ final class PythonListener {
         }
 
         // Always write config to the shared writable path the sudoers wrapper
-        // passes via CLOAK_CONFIG. This is required when the Python source
-        // lives inside the read-only app bundle.
+        // passes via CLOAK_CONFIG (the frozen listener reads a user-writable file).
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try enc.encode(cfg)
         let cfgPath = SudoPrivilege.appSupportListenerConfigPath()
         try data.write(to: URL(fileURLWithPath: cfgPath), options: .atomic)
 
+        let fm = FileManager.default
         guard fm.isExecutableFile(atPath: SudoPrivilege.wrapperPath) else {
             throw NSError(domain: "SNISpoofing", code: 3, userInfo: [NSLocalizedDescriptionKey: "Background helper not installed. Approve the admin prompt when you press Start."])
         }
