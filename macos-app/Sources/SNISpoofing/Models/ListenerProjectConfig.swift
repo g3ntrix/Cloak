@@ -2,11 +2,11 @@ import Foundation
 
 /// Same keys as `config.json` next to `main.py` in your listener project (editable in Settings).
 struct ListenerProjectConfig: Codable, Equatable {
-    var LISTEN_HOST: String = "127.0.0.1"
+    var LISTEN_HOST: String = "0.0.0.0"
     var LISTEN_PORT: Int = 40443
-    var CONNECT_IP: String = ""
+    var CONNECT_IP: String = "104.19.229.21"
     var CONNECT_PORT: Int = 443
-    var FAKE_SNI: String = ""
+    var FAKE_SNI: String = "hcaptcha.com"
 
     static let `default` = ListenerProjectConfig()
 
@@ -14,9 +14,9 @@ struct ListenerProjectConfig: Codable, Equatable {
     static let factoryRestore = ListenerProjectConfig(
         LISTEN_HOST: "0.0.0.0",
         LISTEN_PORT: 40443,
-        CONNECT_IP: "188.114.98.0",
+        CONNECT_IP: "104.19.229.21",
         CONNECT_PORT: 443,
-        FAKE_SNI: "auth.vercel.com"
+        FAKE_SNI: "hcaptcha.com"
     )
 
     /// Pretty JSON for the editor (empty CONNECT/FAKE placeholders).

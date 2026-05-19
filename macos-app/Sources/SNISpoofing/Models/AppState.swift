@@ -392,10 +392,23 @@ final class AppState: ObservableObject {
 
     private func sampleBandwidth() {
         guard status.isRunning else { return }
-        // We sample the total bytes in/out of our Swift process as a proxy for
-        // traffic through the local SOCKS — Xray is a child so its throughput
-        // rolls up. Good enough for a "speed" display; exact per-flow stats
-        // would require enabling Xray's Stats API.
+        
+        // Only sample and display data exchange activity if the connection is actually healthy (egress IP is resolved)
+        guard egressIP != nil else {
+            downloadBytesPerSec = 0
+            uploadBytesPerSec = 0
+            if let counters = NetworkCounters.totalRXTXBytes() {
+                sessionBaselineRx = counters.rx
+                sessionBaselineTx = counters.tx
+                lastBytesIn = counters.rx
+                lastBytesOut = counters.tx
+            }
+            sessionBytesDown = 0
+            sessionBytesUp = 0
+            lastSampleAt = Date()
+            return
+        }
+
         guard let counters = NetworkCounters.totalRXTXBytes() else { return }
         sessionBytesDown = counters.rx >= sessionBaselineRx ? counters.rx - sessionBaselineRx : 0
         sessionBytesUp = counters.tx >= sessionBaselineTx ? counters.tx - sessionBaselineTx : 0

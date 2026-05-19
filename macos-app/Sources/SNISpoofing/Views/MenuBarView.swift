@@ -171,8 +171,8 @@ struct MenuBarView: View {
     }
 
     private var actionsRow: some View {
-        HStack(spacing: 10) {
-            Button {
+        HStack(spacing: 0) {
+            footerRow(label: "Open App", icon: "macwindow") {
                 NSApp.activate(ignoringOtherApps: true)
                 let mainWindows = NSApp.windows.filter { $0.canBecomeMain && !$0.isExcludedFromWindowsMenu }
                 if let existing = mainWindows.first {
@@ -180,24 +180,17 @@ struct MenuBarView: View {
                 } else {
                     openWindow(id: SNISpoofingApp.mainWindowID)
                 }
-            } label: {
-                Label("Open", systemImage: "macwindow")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Button(role: .destructive) {
+            Divider().frame(height: 14)
+            footerRow(label: "Quit", icon: "power", tint: .red) {
                 NSApp.terminate(nil)
-            } label: {
-                Text("Quit")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
+        .padding(.bottom, 2)
+    }
+
+    private func footerRow(label: String, icon: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+        HoverableFooterButton(label: label, icon: icon, tint: tint, action: action)
     }
 
     // MARK: - Helpers
@@ -247,5 +240,42 @@ struct MenuBarView: View {
         if d < 1_000_000 { return String(format: "%.1f KB", d / 1_000) }
         if d < 1_000_000_000 { return String(format: "%.2f MB", d / 1_000_000) }
         return String(format: "%.2f GB", d / 1_000_000_000)
+    }
+}
+
+private struct HoverableFooterButton: View {
+    let label: String
+    let icon: String
+    let tint: Color
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Spacer()
+                Image(systemName: icon)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(isHovered ? tint : (tint == .primary ? .secondary : tint))
+                    .frame(width: 14)
+                Text(label)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(tint)
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
     }
 }

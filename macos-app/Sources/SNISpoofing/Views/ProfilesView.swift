@@ -120,7 +120,7 @@ struct ProfilesView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .controlSize(.regular)
         }
     }
