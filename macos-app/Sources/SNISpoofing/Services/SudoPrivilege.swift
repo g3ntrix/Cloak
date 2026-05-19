@@ -139,6 +139,10 @@ enum SudoPrivilege {
             exit 12
           }
         fi
+        if ! \"\(pythonPath)\" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+          echo \"error: Python 3.8+ is required (found $(\"\(pythonPath)\" -V 2>&1)). Install Command Line Tools or Homebrew python3.\" >&2
+          exit 11
+        fi
         exec \"\(pythonPath)\" \"\(projectDir)/main.py\" \"$@\"
         """
 
