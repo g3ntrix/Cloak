@@ -2,59 +2,112 @@ import SwiftUI
 import AppKit
 
 struct AboutView: View {
+    @Environment(\.openURL) private var openURL
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+    private var appBuild: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(spacing: 16) {
-                    CloakBrandImage(size: 56, cornerRadius: 12)
-                    VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 16) {
+                hero
+                authorCard
+                donateCard
+                linksRow
+            }
+            .padding(.bottom, 4)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    // MARK: - Hero
+
+    private var hero: some View {
+        Card {
+            HStack(spacing: 18) {
+                CloakBrandImage(size: 64, cornerRadius: 14)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
                         Text("Cloak")
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
-                        Text("Cloak routes your traffic through a local SNI-spoofing bridge and Xray to stay connected on restrictive networks.")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 13))
-                            .fixedSize(horizontal: false, vertical: true)
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                        Text("v\(appVersion)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                            .foregroundStyle(Color.accentColor)
+                        Text("build \(appBuild)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
                     }
-                    Spacer()
+                    Text("A macOS proxy app that routes traffic through a local SNI-spoofing bridge and Xray to stay connected on restrictive networks.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Card {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Made by")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text("g3ntrix")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
-                        Link("t.me/g3ntrix", destination: URL(string: "https://t.me/g3ntrix")!)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                }
-
-                Card {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Support the developer")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("If Cloak helps you, consider a small donation. Every bit is appreciated.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        DonationRow(
-                            title: "TON",
-                            address: "UQCriHkMUa6h9oN059tyC23T13OsQhGGM3hUS2S4IYRBZgvx"
-                        )
-                        DonationRow(
-                            title: "USDT (BEP20)",
-                            address: "0x71F41696c60C4693305e67eE3Baa650a4E3dA796"
-                        )
-                        DonationRow(
-                            title: "TRX (TRON)",
-                            address: "TFrCzU7bDey9WSh3fhqCBqhaiMzr8VhcUV"
-                        )
-                    }
-                }
-
-                Spacer(minLength: 12)
+                Spacer(minLength: 0)
             }
         }
+    }
+
+    private var authorCard: some View {
+        Card {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(.cyan)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Made by g3ntrix")
+                        .font(.system(size: 14, weight: .semibold))
+                    Link("t.me/g3ntrix", destination: URL(string: "https://t.me/g3ntrix")!)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var donateCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Support development", systemImage: "heart.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.pink)
+                    Spacer()
+                }
+                Text("If Cloak helps you, a small donation keeps it going.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                DonationRow(title: "TON",          address: "UQCriHkMUa6h9oN059tyC23T13OsQhGGM3hUS2S4IYRBZgvx")
+                DonationRow(title: "USDT (BEP20)", address: "0x71F41696c60C4693305e67eE3Baa650a4E3dA796")
+                DonationRow(title: "TRX (TRON)",   address: "TFrCzU7bDey9WSh3fhqCBqhaiMzr8VhcUV")
+            }
+        }
+    }
+
+    private var linksRow: some View {
+        HStack(spacing: 12) {
+            linkChip("Telegram", systemImage: "paperplane.fill", url: "https://t.me/g3ntrix")
+            linkChip("Source", systemImage: "chevron.left.forwardslash.chevron.right", url: "https://github.com")
+            linkChip("Report issue", systemImage: "ant.fill", url: "https://github.com")
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func linkChip(_ label: String, systemImage: String, url: String) -> some View {
+        Button {
+            if let u = URL(string: url) { openURL(u) }
+        } label: {
+            Label(label, systemImage: systemImage)
+                .font(.system(size: 11, weight: .medium))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 }
 
@@ -68,7 +121,7 @@ private struct DonationRow: View {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 110, alignment: .leading)
+                .frame(width: 96, alignment: .leading)
             Text(address)
                 .font(.system(size: 12, design: .monospaced))
                 .lineLimit(1)
@@ -84,13 +137,10 @@ private struct DonationRow: View {
                     withAnimation { copied = false }
                 }
             } label: {
-                Label(copied ? "Copied" : "Copy",
-                      systemImage: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.borderless)
+            .help(copied ? "Copied" : "Copy address")
         }
-        .padding(.vertical, 4)
     }
 }

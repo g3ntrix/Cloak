@@ -194,6 +194,63 @@ final class AppState: ObservableObject {
         return p
     }
 
+    struct ImportSummary {
+        var added: Int
+        var duplicates: Int
+        var failed: [String]
+        var firstAddedID: UUID?
+        var totalParsed: Int { added + duplicates }
+    }
+
+    /// Bulk-import every URI we can find in `raw`, skipping ones that are
+    /// already in the library (same kind + server + port + secret + SNI).
+    /// The first imported profile becomes active if no profile is set yet.
+    @discardableResult
+    func importMany(from raw: String) -> ImportSummary {
+        let parse = ProfileImporter.importMany(from: raw)
+        var added = 0
+        var duplicates = 0
+        var firstAddedID: UUID?
+        for parsed in parse.profiles {
+            let isDuplicate = profiles.contains { existing in
+                existing.kind == parsed.kind
+                    && existing.server == parsed.server
+                    && existing.serverPort == parsed.serverPort
+                    && existing.tls.serverName == parsed.tls.serverName
+                    && existing.uuid == parsed.uuid
+                    && existing.password == parsed.password
+            }
+            if isDuplicate {
+                duplicates += 1
+                continue
+            }
+            profiles.append(parsed)
+            if firstAddedID == nil { firstAddedID = parsed.id }
+            added += 1
+        }
+        if added > 0 {
+            if settings.activeProfileID == nil, let id = firstAddedID {
+                settings.activeProfileID = id
+                saveSettings()
+            }
+            saveProfiles()
+        }
+        return ImportSummary(
+            added: added,
+            duplicates: duplicates,
+            failed: parse.errors,
+            firstAddedID: firstAddedID
+        )
+    }
+
+    /// Inline rename — keeps focus and existing selection state in the view.
+    func rename(profileID id: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let idx = profiles.firstIndex(where: { $0.id == id }), !trimmed.isEmpty else { return }
+        profiles[idx].name = trimmed
+        saveProfiles()
+    }
+
     func start() async {
         listenerStartedForPingOnly = false
         saveSettings()

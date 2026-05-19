@@ -5,201 +5,296 @@ struct DashboardView: View {
     @State private var uptime: String = "0s"
     @State private var timer: Timer?
     @State private var lanIPv4: String?
+    @State private var copiedLan = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Card {
-                    HStack(spacing: 14) {
-                        StatusOrb(status: app.status)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(app.status.label)
-                                .font(.system(size: 18, weight: .semibold))
-                                .lineLimit(1)
-                            Text(secondaryLabel)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        Spacer()
-                        PowerButton(isRunning: app.status.isRunning,
-                                    isBusy: app.status.isTransitioning) {
-                            Task {
-                                if app.status.isRunning { await app.stop() }
-                                else { await app.start() }
-                            }
-                        }
-                        .disabled(app.activeProfile == nil && !app.status.isRunning)
-                        .opacity(app.activeProfile == nil && !app.status.isRunning ? 0.5 : 1)
-                    }
-                }
-
-                if app.status.isRunning {
-                    Card {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Label("Cloak traffic", systemImage: "waveform.path.ecg")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.cyan)
-                                Spacer()
-                                Text("Xray inbounds only")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                            LazyVGrid(columns: [.init(.flexible(), spacing: 10),
-                                                .init(.flexible(), spacing: 10),
-                                                .init(.flexible(), spacing: 10)], spacing: 10) {
-                                StatTile(icon: "arrow.down.circle", title: "Down now", value: rate(app.downloadBytesPerSec), tint: .blue)
-                                StatTile(icon: "arrow.up.circle", title: "Up now", value: rate(app.uploadBytesPerSec), tint: .purple)
-                                StatTile(icon: "clock", title: "Connected", value: uptime, tint: .green)
-                                StatTile(icon: "arrow.down.to.line", title: "Downloaded", value: formatBytes(app.sessionBytesDown), tint: .cyan)
-                                StatTile(icon: "arrow.up.to.line", title: "Uploaded", value: formatBytes(app.sessionBytesUp), tint: .orange)
-                                StatTile(icon: "sum", title: "Total", value: formatBytes(app.sessionBytesDown + app.sessionBytesUp), tint: .mint)
-                            }
-                        }
-                    }
-                }
-
+                statusCard
+                meterCard
                 HStack(alignment: .top, spacing: 14) {
-                    Card {
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: "network")
-                                .font(.system(size: 17))
-                                .foregroundStyle(.cyan)
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text("Proxy endpoint")
-                                    .font(.system(size: 12, weight: .semibold))
-                                Text(verbatim: "\(app.settings.listenHost):\(app.settings.listenPort)")
-                                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                    .textSelection(.enabled)
-                                if bindsAllInterfaces, let lan = lanIPv4 {
-                                    Text(verbatim: "\(lan):\(app.settings.listenPort) on this LAN")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundStyle(.cyan)
-                                        .textSelection(.enabled)
-                                }
-                                Text(proxyHint)
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .top)
-
-                    Card {
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: app.status.isRunning ? "globe" : "wifi")
-                                .font(.system(size: 17))
-                                .foregroundStyle(app.status.isRunning ? .mint : .blue)
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text(app.status.isRunning ? "VPN egress" : "Direct internet")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Spacer()
-                                    Button { app.status.isRunning ? app.refreshEgressNow() : app.refreshDirectIP() } label: {
-                                        Image(systemName: "arrow.clockwise")
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .help("Refresh")
-                                }
-                                if let ip = app.status.isRunning ? app.egressIP : app.directIP {
-                                    Text(verbatim: ip)
-                                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                        .lineLimit(1)
-                                        .textSelection(.enabled)
-                                } else if let msg = app.status.isRunning ? app.egressLookupMessage : app.directLookupMessage {
-                                    Text(msg)
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                } else {
-                                    Text(verbatim: "—").foregroundStyle(.secondary)
-                                }
-                                if let cc = app.status.isRunning ? app.egressCountry : app.directCountry, !cc.isEmpty {
-                                    Text(countryLine(code: cc))
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer(minLength: 0)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .top)
+                    egressCard.frame(maxWidth: .infinity, alignment: .top)
+                    proxyEndpointCard.frame(maxWidth: .infinity, alignment: .top)
                 }
-
-                HStack(alignment: .top, spacing: 14) {
-                    Card {
-                        VStack(alignment: .leading, spacing: 10) {
-                            if let p = app.activeProfile {
-                                Label("Active profile", systemImage: "checkmark.seal.fill")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.green)
-                                Text(p.name)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .lineLimit(1)
-                                Text(verbatim: "\(p.kind.display) · \(p.server):\(p.serverPort)")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            } else {
-                                Label("No active profile", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.yellow)
-                                Text("Import a profile in Profiles, then come back here to connect.")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .top)
-
-                    SystemProxyCard()
-                        .frame(maxWidth: .infinity, alignment: .top)
+                if let lan = lanIPv4 {
+                    lanCard(lan)
                 }
+                SystemProxyCard()
             }
+            .padding(.bottom, 4)
         }
         .scrollIndicators(.hidden)
         .onAppear {
             startTimer()
             refreshLanIP()
         }
-        .onChange(of: app.settings.listenHost) { _ in refreshLanIP() }
-        .onDisappear { timer?.invalidate() }
+        .onDisappear { stopTimer() }
+        .onChange(of: app.startedAt) { _ in tick() }
+    }
+
+    // MARK: - Status card
+
+    private var statusCard: some View {
+        Card {
+            HStack(spacing: 14) {
+                StatusOrb(status: app.status)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(app.status.label)
+                        .font(.system(size: 19, weight: .semibold))
+                        .lineLimit(1)
+                    Text(secondaryLabel)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                PowerButton(isRunning: app.status.isRunning,
+                            isBusy: app.status.isTransitioning) {
+                    Task {
+                        if app.status.isRunning { await app.stop() }
+                        else { await app.start() }
+                    }
+                }
+                .disabled(app.activeProfile == nil && !app.status.isRunning)
+                .opacity(app.activeProfile == nil && !app.status.isRunning ? 0.5 : 1)
+            }
+        }
+    }
+
+    // MARK: - Compact bandwidth meter (one card, one row)
+
+    private var meterCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .lastTextBaseline) {
+                    Text(app.status.isRunning ? "This session" : "Activity")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    if app.status.isRunning {
+                        Text(uptime)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                HStack(alignment: .center, spacing: 18) {
+                    speedColumn(
+                        icon: "arrow.down",
+                        title: "Down",
+                        speed: app.downloadBytesPerSec,
+                        total: app.sessionBytesDown,
+                        tint: .blue
+                    )
+                    Divider().frame(height: 36)
+                    speedColumn(
+                        icon: "arrow.up",
+                        title: "Up",
+                        speed: app.uploadBytesPerSec,
+                        total: app.sessionBytesUp,
+                        tint: .purple
+                    )
+                    Divider().frame(height: 36)
+                    totalColumn
+                }
+                Sparkbar(value: app.downloadBytesPerSec, peak: peakHint, tint: .blue)
+                    .frame(height: 4)
+            }
+        }
+    }
+
+    private func speedColumn(icon: String, title: String, speed: Double, total: UInt64, tint: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(rate(speed))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                Text("\(title) · \(formatBytes(total))")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var totalColumn: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sum")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.mint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(formatBytes(app.sessionBytesDown + app.sessionBytesUp))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                Text("Total")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Roughly: where to anchor the sparkbar's "full" mark.
+    private var peakHint: Double {
+        max(app.downloadBytesPerSec, app.uploadBytesPerSec, 64 * 1024)  // ~512 kbps floor so we don't draw a full bar at idle
+    }
+
+    // MARK: - Egress + proxy endpoint cards
+
+    private var egressCard: some View {
+        Card {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: app.status.isRunning ? "globe" : "wifi")
+                    .font(.system(size: 17))
+                    .foregroundStyle(app.status.isRunning ? .mint : .blue)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(app.status.isRunning ? "Egress" : "Direct internet")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Button { app.status.isRunning ? app.refreshEgressNow() : app.refreshDirectIP() } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh")
+                    }
+                    if let ip = app.status.isRunning ? app.egressIP : app.directIP {
+                        Text(verbatim: ip)
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .lineLimit(1)
+                            .textSelection(.enabled)
+                    } else if let msg = app.status.isRunning ? app.egressLookupMessage : app.directLookupMessage {
+                        Text(msg)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    } else {
+                        Text(verbatim: "—").foregroundStyle(.secondary)
+                    }
+                    if let cc = app.status.isRunning ? app.egressCountry : app.directCountry, !cc.isEmpty {
+                        Text(countryLine(code: cc))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var proxyEndpointCard: some View {
+        Card {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.cyan)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Local SOCKS")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(verbatim: "\(app.settings.listenHost):\(app.settings.listenPort)")
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .textSelection(.enabled)
+                    Text(app.status.isRunning
+                         ? (app.settings.useSystemProxy
+                            ? "System proxy is on — every app on this Mac uses Cloak."
+                            : "Apps must point at this endpoint to use Cloak.")
+                         : "Click Connect to flip the system proxy on.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    // MARK: - LAN IP
+
+    private func lanCard(_ ip: String) -> some View {
+        Card {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "wifi.router")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("This Mac on LAN")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(verbatim: "\(ip):\(app.settings.listenPort)")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .textSelection(.enabled)
+                    Text(bindsAllInterfaces
+                         ? "Other devices on this network can point their SOCKS proxy here."
+                         : "Set the listener Host to 0.0.0.0 in Settings to expose it to other devices.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString("\(ip):\(app.settings.listenPort)", forType: .string)
+                    withAnimation { copiedLan = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        withAnimation { copiedLan = false }
+                    }
+                } label: {
+                    Image(systemName: copiedLan ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy address")
+            }
+        }
     }
 
     private var bindsAllInterfaces: Bool {
-        let h = app.settings.listenHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let h = app.settings.listenHost.trimmingCharacters(in: .whitespacesAndNewlines)
         return h == "0.0.0.0" || h == "*"
+    }
+
+    // MARK: - Helpers
+
+    private func startTimer() {
+        stopTimer()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            Task { @MainActor in tick() }
+        }
+        tick()
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func tick() {
+        guard let started = app.startedAt else {
+            uptime = "0s"
+            return
+        }
+        let dt = Int(Date().timeIntervalSince(started))
+        let h = dt / 3600, m = (dt % 3600) / 60, s = dt % 60
+        uptime = h > 0 ? String(format: "%dh %02dm", h, m)
+              : m > 0 ? String(format: "%dm %02ds", m, s)
+                      : String(format: "%ds", s)
     }
 
     private func refreshLanIP() {
         lanIPv4 = LanAddress.primaryIPv4String()
     }
 
-    private var proxyHint: String {
-        app.status.isRunning
-            ? "Apps using this proxy are routed through Cloak."
-            : "Set your browser or system proxy here before connecting."
-    }
-
     private var secondaryLabel: String {
-        if case .running = app.status, let started = app.startedAt {
-            return "Up for \(format(interval: Date().timeIntervalSince(started)))"
-        }
-        if app.activeProfile == nil { return "Import a profile in the Profiles tab to get started." }
-        return "Ready to connect."
-    }
-
-    private func startTimer() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            Task { @MainActor in
-                if let s = app.startedAt {
-                    uptime = format(interval: Date().timeIntervalSince(s))
-                }
-            }
+        switch app.status {
+        case .stopped:
+            return app.activeProfile == nil
+                ? "No profile selected. Import or pick one from Profiles."
+                : "Active profile: \(app.activeProfile?.name ?? "—")"
+        case .running:
+            return "Active profile: \(app.activeProfile?.name ?? "—")"
+        case .starting: return "Bringing up the bridge and Xray…"
+        case .stopping: return "Tearing down."
+        case .error(let msg): return msg
         }
     }
 
@@ -223,14 +318,6 @@ struct DashboardView: View {
         if d < 1_000_000_000 { return String(format: "%.2f MB", d / 1_000_000) }
         return String(format: "%.2f GB", d / 1_000_000_000)
     }
-
-    private func format(interval: TimeInterval) -> String {
-        let t = Int(interval)
-        let h = t / 3600, m = (t % 3600) / 60, s = t % 60
-        if h > 0 { return String(format: "%dh %02dm %02ds", h, m, s) }
-        if m > 0 { return String(format: "%dm %02ds", m, s) }
-        return "\(s)s"
-    }
 }
 
 // MARK: - Building blocks
@@ -243,41 +330,14 @@ struct Card<Content: View>: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(AppTheme.cardFill(for: colorScheme))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .stroke(AppTheme.stroke(for: colorScheme), lineWidth: 1)
                     )
                     .shadow(color: AppTheme.cardShadow(for: colorScheme), radius: 14, y: 6)
             )
-    }
-}
-
-private struct StatTile: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let icon: String
-    let title: String
-    let value: String
-    let tint: Color
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(tint)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(AppTheme.subtleFill(for: colorScheme))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.faintStroke(for: colorScheme)))
-        )
     }
 }
 
@@ -297,12 +357,12 @@ struct StatusOrb: View {
         }
         .onAppear { pulse = true }
     }
-    var color: Color {
+    private var color: Color {
         switch status {
-        case .running: return .green
-        case .starting, .stopping: return .yellow
-        case .error: return .red
         case .stopped: return .gray
+        case .starting, .stopping: return .yellow
+        case .running: return .green
+        case .error: return .red
         }
     }
 }
@@ -312,17 +372,18 @@ struct PowerButton: View {
     let isBusy: Bool
     let action: () -> Void
     @State private var hover = false
-
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 if isBusy {
-                    ProgressView().controlSize(.small).tint(.white)
+                    ProgressView().controlSize(.small)
+                        .progressViewStyle(.circular)
+                        .tint(.white)
                 } else {
-                    Image(systemName: isRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 12, weight: .bold))
+                    Image(systemName: isRunning ? "stop.fill" : "power")
+                        .font(.system(size: 13, weight: .bold))
                 }
-                Text(isRunning ? "Stop" : "Start")
+                Text(isRunning ? "Disconnect" : "Connect")
                     .font(.system(size: 13, weight: .semibold))
             }
             .foregroundColor(.white)
@@ -350,18 +411,44 @@ struct PowerButton: View {
     }
 }
 
+/// Single-line activity bar that fills proportionally to current vs peak.
+private struct Sparkbar: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let value: Double
+    let peak: Double
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(AppTheme.subtleFill(for: colorScheme))
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(LinearGradient(colors: [tint.opacity(0.85), tint], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(0, min(geo.size.width, geo.size.width * filled)))
+                    .animation(.easeOut(duration: 0.4), value: filled)
+            }
+        }
+    }
+
+    private var filled: CGFloat {
+        guard peak > 0 else { return 0 }
+        return CGFloat(min(1.0, value / peak))
+    }
+}
+
 struct SystemProxyCard: View {
     @EnvironmentObject var app: AppState
 
     var body: some View {
         Card {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "shield.lefthalf.filled")
+                Image(systemName: "switch.2")
                     .font(.system(size: 17))
                     .foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("System proxy")
+                        Text("Capture all system traffic")
                             .font(.system(size: 12, weight: .semibold))
                         Spacer()
                         Toggle("", isOn: Binding(
@@ -376,8 +463,8 @@ struct SystemProxyCard: View {
                         .labelsHidden()
                     }
                     Text(app.settings.useSystemProxy
-                         ? "Cloak flips the macOS SOCKS proxy to its local listener on connect, so every app routes through it automatically."
-                         : "System proxy is off. Apps must opt in to the local SOCKS endpoint manually.")
+                         ? "On Connect, Cloak flips the macOS SOCKS proxy to its local listener so every app routes through it."
+                         : "Off — apps have to point at the local SOCKS endpoint themselves.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

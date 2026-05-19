@@ -38,6 +38,32 @@ enum ProfileImporter {
         }
     }
 
+    /// Pre-flight scan of pasted text: returns the count of distinct profile URIs
+    /// found, without parsing them. Used by the import sheet to show "Detected X
+    /// links" before the user commits.
+    static func countCandidates(in raw: String) -> Int {
+        allProxyURLs(in: raw).count
+    }
+
+    /// Bulk import: extract every supported URI from `raw`, parse each one, and
+    /// return the successes alongside any per-URI errors. Designed for pasting
+    /// the contents of a subscription file (one URI per line, blank lines OK).
+    static func importMany(from raw: String) -> (profiles: [Profile], errors: [String]) {
+        let uris = allProxyURLs(in: raw)
+        var profiles: [Profile] = []
+        var errors: [String] = []
+        for (i, uri) in uris.enumerated() {
+            do {
+                let p = try ProfileURLParser.parse(uri)
+                profiles.append(p)
+            } catch {
+                let label = uri.count > 40 ? "\(uri.prefix(40))…" : uri
+                errors.append("Line \(i + 1) (\(label)): \(error.localizedDescription)")
+            }
+        }
+        return (profiles, errors)
+    }
+
     /// Returns a fully-wired Profile from mixed user paste.
     /// Accepts: just a URL, just a JSON block, or both (in any order, on any lines).
     static func importFrom(_ raw: String) throws -> Profile {
@@ -102,22 +128,46 @@ enum ProfileImporter {
     private static let schemes = ["vless://", "vmess://", "trojan://", "ss://"]
 
     private static func firstProxyURL(in text: String) -> String? {
-        let lines = text.split(whereSeparator: \.isNewline)
-        for line in lines {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            for scheme in schemes where t.lowercased().hasPrefix(scheme) {
-                return t
+        allProxyURLs(in: text).first
+    }
+
+    /// Every supported URI in `text`, in order, de-duplicated by exact match.
+    /// Handles subscription files that put one URI per line, multiple on a
+    /// single line, or sprinkle them inside other prose.
+    static func allProxyURLs(in text: String) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        // Scan line by line first (the common subscription-file layout).
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let scheme = schemes.first(where: { trimmed.lowercased().hasPrefix($0) }),
+               !scheme.isEmpty {
+                if seen.insert(trimmed).inserted { out.append(trimmed) }
+            } else {
+                // Search inside the line for any embedded URIs.
+                appendURIs(in: trimmed, into: &out, seen: &seen)
             }
         }
-        // Also search within a line (paste might be a blob).
-        for scheme in schemes {
-            if let range = text.range(of: scheme, options: .caseInsensitive) {
-                let tail = text[range.lowerBound...]
-                let endIdx = tail.firstIndex(where: { $0.isWhitespace || $0.isNewline }) ?? tail.endIndex
-                return String(tail[..<endIdx])
-            }
+        // If nothing came out (one giant line, no newlines), scan the whole blob.
+        if out.isEmpty {
+            appendURIs(in: text, into: &out, seen: &seen)
         }
-        return nil
+        return out
+    }
+
+    private static func appendURIs(in text: String, into out: inout [String], seen: inout Set<String>) {
+        var rest = Substring(text)
+        while let range = rest.range(of: schemes.joined(separator: "|"), options: [.regularExpression, .caseInsensitive]) {
+            let tail = rest[range.lowerBound...]
+            // URI ends at the next whitespace; the `#fragment` part can contain
+            // unusual chars but never whitespace.
+            let endIdx = tail.firstIndex(where: { $0.isWhitespace }) ?? tail.endIndex
+            let uri = String(tail[..<endIdx]).trimmingCharacters(in: .whitespaces)
+            if !uri.isEmpty, seen.insert(uri).inserted {
+                out.append(uri)
+            }
+            rest = tail[endIdx...]
+        }
     }
 
     /// Returns the substring between the first `{` and its matching `}`.
