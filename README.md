@@ -2,9 +2,6 @@
 
 **Cloak** is a macOS app that routes traffic through a local SNI-spoofing bridge and an embedded **Xray** core. Import CDN profiles (VLESS, Trojan, and more), connect with one click, and optionally send all system traffic through the local SOCKS proxy.
 
-## Cloak for macOS
-
-Native SwiftUI client for the Cloak / SNI-spoofing stack. Manages profiles, runs the bundled Python listener and Xray, and exposes a local SOCKS proxy (with optional system-wide proxy).
 
 <table>
   <tr>
