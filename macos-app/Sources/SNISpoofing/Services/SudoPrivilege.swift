@@ -1,20 +1,19 @@
 import Foundation
 import AppKit
 
-/// One-time admin-escalation that installs a NOPASSWD sudoers rule so the
-/// Python listener can run without a password prompt on every Start.
+/// One-time admin escalation that installs two NOPASSWD sudoers helpers so the
+/// app can run the Python listener and toggle the system SOCKS proxy without a
+/// password prompt on every action.
 ///
-/// The rule is scoped to the current user and to a specific wrapper script
-/// we drop at `/usr/local/bin/cloak-listener`. The wrapper just exec's the
-/// bundled Python entrypoint — this keeps the sudoers rule tight (no wildcard
-/// paths) and lets us rewrite the wrapper without needing a new admin prompt.
+/// Helpers (all root-owned, scoped to specific scripts in the sudoers rule):
+///   - `/usr/local/bin/cloak-listener` — runs the bundled Python SNI listener.
+///   - `/usr/local/bin/cloak-proxy`    — enables/disables the macOS system SOCKS proxy.
 enum SudoPrivilege {
     static let sudoersPath = "/etc/sudoers.d/cloak"
     static let wrapperPath = "/usr/local/bin/cloak-listener"
-    static let wrapperVersion = "4"
-    static let xrayWrapperPath = "/usr/local/bin/cloak-xray"
-    /// `sudo -n cloak-tun-routes up|down <connect_ip> <utun_name>` — IPv4 split routes for TUN mode.
-    static let tunRoutesPath = "/usr/local/bin/cloak-tun-routes"
+    static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
+    /// Bumped whenever any embedded script changes — forces re-install.
+    static let wrapperVersion = "6"
 
     enum SudoError: LocalizedError {
         case promptCancelled
@@ -24,7 +23,7 @@ enum SudoPrivilege {
         var errorDescription: String? {
             switch self {
             case .promptCancelled:
-                return "Admin permission was cancelled. Cloak needs it once to set up its background helper."
+                return "Admin permission was cancelled. Cloak needs it once to set up its background helpers."
             case .installFailed(let msg):
                 return "Setup failed: \(msg)"
             case .missingPython:
@@ -33,16 +32,58 @@ enum SudoPrivilege {
         }
     }
 
-    /// True if both the wrapper and sudoers rule are in place.
+    /// Fire-and-forget: ask the installed root wrapper to pkill any python it spawned.
+    /// Used on app termination so a crashed/force-quit Cloak doesn't leave a listener
+    /// consuming CPU. Safe to call when nothing is running.
+    static func killLeftoverListener() {
+        guard FileManager.default.isExecutableFile(atPath: wrapperPath) else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        p.arguments = ["-n", wrapperPath, "--kill-leftover"]
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        try? p.run()
+        p.waitUntilExit()
+    }
+
+    /// Run the proxy helper passwordless. Returns exit status (0 = success).
+    @discardableResult
+    static func runProxyHelper(_ args: [String]) -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        p.arguments = ["-n", proxyHelperPath] + args
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        do { try p.run() } catch { return -1 }
+        p.waitUntilExit()
+        return p.terminationStatus
+    }
+
+    /// True when both helpers are installed and NOPASSWD sudo works against them.
     static func isInstalled() -> Bool {
+        listenerHelperReady() && proxyHelperReady()
+    }
+
+    static func listenerHelperReady() -> Bool {
         let fm = FileManager.default
         guard fm.isExecutableFile(atPath: wrapperPath),
               fm.fileExists(atPath: sudoersPath)
         else { return false }
-        // Also verify sudo -n can actually run it; otherwise the rule is stale.
+        return selfCheck(wrapperPath, expectVersion: wrapperVersion)
+    }
+
+    static func proxyHelperReady() -> Bool {
+        let fm = FileManager.default
+        guard fm.isExecutableFile(atPath: proxyHelperPath),
+              fm.fileExists(atPath: sudoersPath)
+        else { return false }
+        return selfCheck(proxyHelperPath, expectVersion: wrapperVersion)
+    }
+
+    private static func selfCheck(_ helper: String, expectVersion: String) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        p.arguments = ["-n", wrapperPath, "--wrapper-version"]
+        p.arguments = ["-n", helper, "--self-check"]
         let out = Pipe()
         p.standardOutput = out
         p.standardError = out
@@ -52,67 +93,33 @@ enum SudoPrivilege {
             guard p.terminationStatus == 0 else { return false }
             let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return text == wrapperVersion
+            return text == expectVersion
         } catch {
             return false
         }
     }
 
-    /// True if the TUN route helper is installed and NOPASSWD works (for **System tunnel (TUN)**).
-    static func tunRoutesHelperReady() -> Bool {
-        let fm = FileManager.default
-        guard fm.isExecutableFile(atPath: tunRoutesPath) else { return false }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        p.arguments = ["-n", tunRoutesPath, "--self-check"]
-        let devnull = Pipe()
-        p.standardOutput = devnull
-        p.standardError = devnull
-        do {
-            try p.run()
-            p.waitUntilExit()
-            return p.terminationStatus == 0
-        } catch {
-            return false
-        }
-    }
-
-    /// True if the privileged Xray launcher is installed (required for TUN mode).
-    static func xrayWrapperReady() -> Bool {
-        let fm = FileManager.default
-        guard fm.isExecutableFile(atPath: xrayWrapperPath) else { return false }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        p.arguments = ["-n", xrayWrapperPath, "--self-check"]
-        let devnull = Pipe()
-        p.standardOutput = devnull
-        p.standardError = devnull
-        do {
-            try p.run()
-            p.waitUntilExit()
-            return p.terminationStatus == 0
-        } catch {
-            return false
-        }
-    }
-
-    /// Prompts once for an admin password via the system dialog and installs:
-    ///   1) `/usr/local/bin/cloak-listener` (exec wrapper, root-owned)
-    ///   2) `/etc/sudoers.d/cloak` (NOPASSWD rule for the current user)
+    /// Prompts once for an admin password and installs both helpers + the sudoers rule.
     static func install() throws {
         guard let pythonPath = systemPython() else { throw SudoError.missingPython }
 
         let user = NSUserName()
         let projectDir = AppSettings.default.resolvedPythonProjectPath
         let configPath = appSupportListenerConfigPath()
-        let wrapperScript = """
+
+        let listenerScript = """
         #!/bin/bash
         # Auto-generated by Cloak. Runs the bundled SNI-spoofing listener as root.
         # The sudoers rule at /etc/sudoers.d/cloak only grants NOPASSWD for
         # running THIS file, so the surface is small and easy to audit.
         set -euo pipefail
-        if [ "${1:-}" = "--self-check" ]; then exit 0; fi
+        if [ "${1:-}" = "--self-check" ]; then echo "\(wrapperVersion)"; exit 0; fi
         if [ "${1:-}" = "--wrapper-version" ]; then echo "\(wrapperVersion)"; exit 0; fi
+        if [ "${1:-}" = "--kill-leftover" ]; then
+          /usr/bin/pkill -f \(wrapperPath) >/dev/null 2>&1 || true
+          /usr/bin/pkill -f \"\(projectDir)/main.py\" >/dev/null 2>&1 || true
+          exit 0
+        fi
         export CLOAK_CONFIG=\"\(configPath)\"
         cd \"\(projectDir)\"
         WHEEL_DIR=\"\(projectDir)/wheelhouse\"
@@ -135,84 +142,70 @@ enum SudoPrivilege {
         exec \"\(pythonPath)\" \"\(projectDir)/main.py\" \"$@\"
         """
 
-        // Escape for embedding inside the AppleScript `do shell script` literal.
-        let wrapperB64 = Data(wrapperScript.utf8).base64EncodedString()
-        let xrayWrapperScript = """
+        let proxyScript = """
         #!/bin/bash
+        # cloak-proxy: scoped wrapper that toggles the macOS system SOCKS proxy
+        # on every active network service via the whitelisted `networksetup`
+        # subcommands. Sudoers grants NOPASSWD only for THIS path.
         set -euo pipefail
-        if [ "${1:-}" = "--self-check" ]; then exit 0; fi
-        XRAY_BIN="${1:-}"
-        CFG_PATH="${2:-}"
-        RES_DIR="${3:-}"
-        if [ -z "$XRAY_BIN" ] || [ -z "$CFG_PATH" ] || [ -z "$RES_DIR" ]; then
-          echo "usage: $0 <xray_bin> <config_path> <resource_dir>" >&2
-          exit 1
-        fi
-        cd "$RES_DIR"
-        exec "$XRAY_BIN" run -c "$CFG_PATH"
-        """
-        let xrayWrapperB64 = Data(xrayWrapperScript.utf8).base64EncodedString()
-        let tunRoutesScript = """
-        #!/bin/bash
-        set -euo pipefail
-        if [ "${1:-}" = "--self-check" ]; then exit 0; fi
+        if [ "${1:-}" = "--self-check" ]; then echo "\(wrapperVersion)"; exit 0; fi
         ACTION="${1:-}"
-        CONNECT_IP="${2:-}"
-        UTUN="${3:-}"
-        if [ -z "$ACTION" ] || [ -z "$CONNECT_IP" ] || [ -z "$UTUN" ]; then
-          echo "usage: $0 up|down <connect_ip> <utun_name>" >&2
-          exit 1
-        fi
-        GW="$(route -n get default 2>/dev/null | awk '/gateway:/{print $2; exit}')"
-        if [ -z "$GW" ]; then
-          echo "cloak-tun-routes: no default gateway" >&2
-          exit 1
-        fi
+        HOST="${2:-}"
+        PORT="${3:-}"
         case "$ACTION" in
-          up)
-            route add -host "$CONNECT_IP" "$GW" 2>/dev/null || route change -host "$CONNECT_IP" "$GW" 2>/dev/null || true
-            route add -net 0.0.0.0/1 -interface "$UTUN" 2>/dev/null || route change -net 0.0.0.0/1 -interface "$UTUN" 2>/dev/null || true
-            route add -net 128.0.0.0/1 -interface "$UTUN" 2>/dev/null || route change -net 128.0.0.0/1 -interface "$UTUN" 2>/dev/null || true
+          enable)
+            if [ -z "$HOST" ] || [ -z "$PORT" ]; then
+              echo "usage: $0 enable <host> <port>" >&2; exit 1
+            fi
+            /usr/sbin/networksetup -listallnetworkservices \\
+              | /usr/bin/grep -v '^[*]' | /usr/bin/tail -n +2 \\
+              | while IFS= read -r svc; do
+                  /usr/sbin/networksetup -setsocksfirewallproxy "$svc" "$HOST" "$PORT" off 2>/dev/null || true
+                  /usr/sbin/networksetup -setsocksfirewallproxystate "$svc" on 2>/dev/null || true
+                done
             ;;
-          down)
-            route delete -net 0.0.0.0/1 -interface "$UTUN" 2>/dev/null || true
-            route delete -net 128.0.0.0/1 -interface "$UTUN" 2>/dev/null || true
-            route delete -host "$CONNECT_IP" 2>/dev/null || true
+          disable)
+            /usr/sbin/networksetup -listallnetworkservices \\
+              | /usr/bin/grep -v '^[*]' | /usr/bin/tail -n +2 \\
+              | while IFS= read -r svc; do
+                  /usr/sbin/networksetup -setsocksfirewallproxystate "$svc" off 2>/dev/null || true
+                done
             ;;
           *)
-            echo "usage: $0 up|down <connect_ip> <utun_name>" >&2
-            exit 1
+            echo "usage: $0 enable <host> <port> | disable" >&2; exit 1
             ;;
         esac
         """
-        let tunRoutesB64 = Data(tunRoutesScript.utf8).base64EncodedString()
+
+        let listenerB64 = Data(listenerScript.utf8).base64EncodedString()
+        let proxyB64 = Data(proxyScript.utf8).base64EncodedString()
+
         let sudoersContent = """
         \(user) ALL=(ALL) NOPASSWD: \(wrapperPath)
-        \(user) ALL=(ALL) NOPASSWD: \(xrayWrapperPath)
-        \(user) ALL=(ALL) NOPASSWD: \(tunRoutesPath)
+        \(user) ALL=(ALL) NOPASSWD: \(proxyHelperPath)
         """
         let sudoersB64 = Data(sudoersContent.utf8).base64EncodedString()
 
         let shell = """
         set -e
         mkdir -p /usr/local/bin
-        echo '\(wrapperB64)' | /usr/bin/base64 -D > '\(wrapperPath)'
+        echo '\(listenerB64)' | /usr/bin/base64 -D > '\(wrapperPath)'
         chown root:wheel '\(wrapperPath)'
         chmod 755 '\(wrapperPath)'
-        echo '\(xrayWrapperB64)' | /usr/bin/base64 -D > '\(xrayWrapperPath)'
-        chown root:wheel '\(xrayWrapperPath)'
-        chmod 755 '\(xrayWrapperPath)'
-        echo '\(tunRoutesB64)' | /usr/bin/base64 -D > '\(tunRoutesPath)'
-        chown root:wheel '\(tunRoutesPath)'
-        chmod 755 '\(tunRoutesPath)'
+        echo '\(proxyB64)' | /usr/bin/base64 -D > '\(proxyHelperPath)'
+        chown root:wheel '\(proxyHelperPath)'
+        chmod 755 '\(proxyHelperPath)'
         echo '\(sudoersB64)' | /usr/bin/base64 -D > '\(sudoersPath)'
         chown root:wheel '\(sudoersPath)'
         chmod 440 '\(sudoersPath)'
         /usr/sbin/visudo -cf '\(sudoersPath)' >/dev/null
+        # Best-effort cleanup of obsolete helpers from older versions so they
+        # can't be invoked via a stale sudoers rule cached in another process.
+        rm -f /usr/local/bin/cloak-xray /usr/local/bin/cloak-tun-routes 2>/dev/null || true
         """
 
         let appleScriptSource = """
-        do shell script "\(escapeForAppleScript(shell))" with administrator privileges with prompt "Cloak needs one-time admin permission so it can start the VPN without asking for your password every time."
+        do shell script "\(escapeForAppleScript(shell))" with administrator privileges with prompt "Cloak needs one-time admin permission so it can start the listener and toggle the system proxy without asking for your password every time."
         """
 
         var err: NSDictionary?
@@ -221,7 +214,6 @@ enum SudoPrivilege {
         }
         if let e = err {
             let code = (e[NSAppleScript.errorNumber] as? Int) ?? 0
-            // -128 = user cancelled.
             if code == -128 { throw SudoError.promptCancelled }
             let msg = (e[NSAppleScript.errorMessage] as? String) ?? "unknown"
             throw SudoError.installFailed(msg)
@@ -231,16 +223,16 @@ enum SudoPrivilege {
         }
     }
 
-    /// Removes the sudoers rule and wrapper (requires admin prompt again).
+    /// Removes the sudoers rule and helper scripts (prompts for admin again).
     static func uninstall() throws {
         let shell = """
         rm -f '\(sudoersPath)'
         rm -f '\(wrapperPath)'
-        rm -f '\(xrayWrapperPath)'
-        rm -f '\(tunRoutesPath)'
+        rm -f '\(proxyHelperPath)'
+        rm -f /usr/local/bin/cloak-xray /usr/local/bin/cloak-tun-routes
         """
         let source = """
-        do shell script "\(escapeForAppleScript(shell))" with administrator privileges with prompt "Remove Cloak's passwordless startup rule?"
+        do shell script "\(escapeForAppleScript(shell))" with administrator privileges with prompt "Remove Cloak's passwordless helpers?"
         """
         var err: NSDictionary?
         if let script = NSAppleScript(source: source) {
@@ -278,7 +270,6 @@ enum SudoPrivilege {
     }
 
     private static func escapeForAppleScript(_ s: String) -> String {
-        // AppleScript strings: escape backslashes and double quotes only.
         var out = ""
         for ch in s {
             switch ch {

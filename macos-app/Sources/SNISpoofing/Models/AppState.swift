@@ -59,8 +59,8 @@ final class AppState: ObservableObject {
     private let store = ConfigStore()
     private let python = PythonListener()
     private let xray = XrayCoreManager()
-    /// Tracks whether IPv4 split routes were applied for TUN mode (must be removed on stop).
-    private var tunRoutesActive = false
+    /// Tracks whether we flipped the system SOCKS proxy on (must be flipped back off on stop).
+    private var systemProxyActive = false
     /// True when we started the Python listener only for Profiles ping (not full VPN).
     private var listenerStartedForPingOnly = false
     private var sessionBaselineRx: UInt64 = 0
@@ -113,9 +113,26 @@ final class AppState: ObservableObject {
     }
 
     private func appendLog(_ line: LogLine, prefix: String) {
+        guard settings.logsEnabled else { return }
         let l = LogLine(timestamp: line.timestamp, stream: line.stream, text: prefix + line.text)
         if logs.count > 5000 { logs.removeFirst(1000) }
         logs.append(l)
+    }
+
+    /// Synchronous best-effort shutdown for app termination paths where async
+    /// `stop()` would race the process exit. Tears down xray + python and
+    /// removes TUN routes if they were applied.
+    func terminateSync() {
+        if systemProxyActive {
+            SystemProxy.disableSync()
+            systemProxyActive = false
+        }
+        xray.stopSync()
+        python.stop()
+        // Belt-and-suspenders: kill any orphaned listener spawned via sudo
+        // wrapper (the user's macOS reported a leftover python heating up
+        // the machine after a previous version's window was closed).
+        SudoPrivilege.killLeftoverListener()
     }
 
     func refreshDirectIP() {
@@ -212,21 +229,10 @@ final class AppState: ObservableObject {
         status = .starting
 
         do {
-            // Listener helper, and (when TUN is on) the route helper — same installer; may prompt twice in one flow if upgrading.
+            // One admin prompt installs both helpers (listener + proxy toggle).
             if !SudoPrivilege.isInstalled() {
                 try SudoPrivilege.install()
                 privilegesInstalled = true
-            }
-            if settings.useTunMode && (!SudoPrivilege.tunRoutesHelperReady() || !SudoPrivilege.xrayWrapperReady()) {
-                try SudoPrivilege.install()
-                privilegesInstalled = true
-            }
-            if settings.useTunMode && (!SudoPrivilege.tunRoutesHelperReady() || !SudoPrivilege.xrayWrapperReady()) {
-                throw NSError(
-                    domain: "SNISpoofing",
-                    code: 21,
-                    userInfo: [NSLocalizedDescriptionKey: "Could not install required TUN helpers. Try Settings → Grant permission… again."]
-                )
             }
 
             try python.start(
@@ -243,23 +249,25 @@ final class AppState: ObservableObject {
             )
             let cfgURL = try store.writeGeneratedXrayConfig(xdata)
 
-            try xray.start(configURL: cfgURL, runAsRoot: settings.useTunMode)
+            try xray.start(configURL: cfgURL)
 
-            if settings.useTunMode {
-                guard listenerProject.CONNECT_IP.split(separator: ".").count == 4 else {
+            // Give xray a beat to open its SOCKS port before flipping the
+            // system proxy onto it — otherwise the first wave of system
+            // traffic races the listener coming up and looks like a failure.
+            try await Task.sleep(nanoseconds: 400_000_000)
+
+            if settings.useSystemProxy {
+                let host = settings.resolvedSocksHostForLocalClient
+                switch SystemProxy.enable(host: host, port: settings.listenPort) {
+                case .ok:
+                    systemProxyActive = true
+                case .failed(let msg):
                     throw NSError(
                         domain: "SNISpoofing",
-                        code: 22,
-                        userInfo: [NSLocalizedDescriptionKey: "TUN routing currently requires CONNECT_IP to be an IPv4 address in your Cloudflare JSON."]
+                        code: 23,
+                        userInfo: [NSLocalizedDescriptionKey: "Couldn't flip the system proxy on: \(msg)"]
                     )
                 }
-                try await Task.sleep(nanoseconds: 500_000_000)
-                let tun = settings.tunInterfaceName.trimmingCharacters(in: .whitespacesAndNewlines)
-                try TunRoutes.applyUp(
-                    connectIP: listenerProject.CONNECT_IP.trimmingCharacters(in: .whitespacesAndNewlines),
-                    tunName: tun
-                )
-                tunRoutesActive = true
             }
 
             startedAt = Date()
@@ -276,13 +284,9 @@ final class AppState: ObservableObject {
             scheduleEgressRefresh()
             startBandwidthSampler()
         } catch {
-            if tunRoutesActive {
-                let tun = settings.tunInterfaceName.trimmingCharacters(in: .whitespacesAndNewlines)
-                TunRoutes.applyDownSync(
-                    connectIP: listenerProject.CONNECT_IP.trimmingCharacters(in: .whitespacesAndNewlines),
-                    tunName: tun
-                )
-                tunRoutesActive = false
+            if systemProxyActive {
+                SystemProxy.disableSync()
+                systemProxyActive = false
             }
             await stopInternal()
             status = .error(error.localizedDescription)
@@ -306,13 +310,9 @@ final class AppState: ObservableObject {
     }
 
     private func stopInternal() async {
-        if tunRoutesActive {
-            let tun = settings.tunInterfaceName.trimmingCharacters(in: .whitespacesAndNewlines)
-            TunRoutes.applyDownSync(
-                connectIP: listenerProject.CONNECT_IP.trimmingCharacters(in: .whitespacesAndNewlines),
-                tunName: tun
-            )
-            tunRoutesActive = false
+        if systemProxyActive {
+            SystemProxy.disableSync()
+            systemProxyActive = false
         }
         await xray.stop()
         python.stop()
@@ -452,8 +452,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// After TUN or other settings that require a new Xray config, reconnect if already connected.
-    func reconnectIfRunningAfterTunChange() async {
+    /// Restart the stack to pick up a settings change (port, proxy toggle, etc.).
+    func reconnectIfRunning() async {
         guard status.isRunning else { return }
         await stop()
         await start()

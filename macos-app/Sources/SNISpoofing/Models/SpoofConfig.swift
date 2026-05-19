@@ -10,15 +10,15 @@ struct AppSettings: Codable, Equatable {
     var listenHost: String = "127.0.0.1"
     var listenPort: Int = 2080
 
-    /// When enabled, Xray also opens a TUN (`utun*`) and the app installs split
-    /// IPv4 routes so system traffic can use the tunnel (requires admin helper).
-    var useTunMode: Bool = false
-    /// Must match `utunN` scheme on macOS; pick a high N to avoid clashes.
-    var tunInterfaceName: String = "utun199"
-    var tunMTU: Int = 1492
+    /// When enabled, Cloak toggles the macOS system SOCKS proxy so all apps
+    /// route through Xray automatically without manual per-app configuration.
+    var useSystemProxy: Bool = true
 
     var activeProfileID: UUID?
-    var logLevel: LogLevel = .info
+    var logLevel: LogLevel = .warn
+    /// When false, the in-app Logs viewer doesn't collect xray/listener output.
+    /// User can opt-in from Settings → Diagnostics.
+    var logsEnabled: Bool = false
 
     enum LogLevel: String, Codable, CaseIterable, Identifiable {
         case trace, debug, info, warn, error, fatal, panic
@@ -31,26 +31,24 @@ struct AppSettings: Codable, Equatable {
         pythonProjectPath: String? = nil,
         listenHost: String = "127.0.0.1",
         listenPort: Int = 2080,
-        useTunMode: Bool = false,
-        tunInterfaceName: String = "utun199",
-        tunMTU: Int = 1492,
+        useSystemProxy: Bool = true,
         activeProfileID: UUID? = nil,
-        logLevel: LogLevel = .info
+        logLevel: LogLevel = .warn,
+        logsEnabled: Bool = false
     ) {
         self.pythonProjectPath = pythonProjectPath
         self.listenHost = listenHost
         self.listenPort = listenPort
-        self.useTunMode = useTunMode
-        self.tunInterfaceName = tunInterfaceName
-        self.tunMTU = tunMTU
+        self.useSystemProxy = useSystemProxy
         self.activeProfileID = activeProfileID
         self.logLevel = logLevel
+        self.logsEnabled = logsEnabled
     }
 
     enum CodingKeys: String, CodingKey {
         case pythonProjectPath, listenHost, listenPort
-        case useTunMode, tunInterfaceName, tunMTU
-        case activeProfileID, logLevel
+        case useSystemProxy
+        case activeProfileID, logLevel, logsEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -58,11 +56,10 @@ struct AppSettings: Codable, Equatable {
         pythonProjectPath = try c.decodeIfPresent(String.self, forKey: .pythonProjectPath)
         listenHost = try c.decodeIfPresent(String.self, forKey: .listenHost) ?? "127.0.0.1"
         listenPort = try c.decodeIfPresent(Int.self, forKey: .listenPort) ?? 2080
-        useTunMode = try c.decodeIfPresent(Bool.self, forKey: .useTunMode) ?? false
-        tunInterfaceName = try c.decodeIfPresent(String.self, forKey: .tunInterfaceName) ?? "utun199"
-        tunMTU = try c.decodeIfPresent(Int.self, forKey: .tunMTU) ?? 1492
+        useSystemProxy = try c.decodeIfPresent(Bool.self, forKey: .useSystemProxy) ?? true
         activeProfileID = try c.decodeIfPresent(UUID.self, forKey: .activeProfileID)
-        logLevel = try c.decodeIfPresent(LogLevel.self, forKey: .logLevel) ?? .info
+        logLevel = try c.decodeIfPresent(LogLevel.self, forKey: .logLevel) ?? .warn
+        logsEnabled = try c.decodeIfPresent(Bool.self, forKey: .logsEnabled) ?? false
     }
 
     /// Host the **app** uses to talk to the local SOCKS (never `0.0.0.0` / “all interfaces”).

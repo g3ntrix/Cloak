@@ -66,6 +66,32 @@ struct SettingsView: View {
                     }
                 }
 
+                // Diagnostics — off by default; user opts in to capture xray/listener output.
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Diagnostics")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { app.settings.logsEnabled },
+                                set: {
+                                    app.settings.logsEnabled = $0
+                                    app.saveSettings()
+                                    if !$0 { app.clearLogs() }
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        }
+                        Text(app.settings.logsEnabled
+                             ? "Capturing xray + listener output in the Logs tab."
+                             : "Logs are off. Turn them on to diagnose a problem.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 // Admin-permission helper.
                 Card {
                     VStack(alignment: .leading, spacing: 10) {

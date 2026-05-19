@@ -155,7 +155,7 @@ struct DashboardView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .top)
 
-                    TunModeCard()
+                    SystemProxyCard()
                         .frame(maxWidth: .infinity, alignment: .top)
                 }
             }
@@ -347,5 +347,43 @@ struct PowerButton: View {
         .buttonStyle(.plain)
         .disabled(isBusy)
         .onHover { hover = $0 }
+    }
+}
+
+struct SystemProxyCard: View {
+    @EnvironmentObject var app: AppState
+
+    var body: some View {
+        Card {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.cyan)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("System proxy")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { app.settings.useSystemProxy },
+                            set: {
+                                app.settings.useSystemProxy = $0
+                                app.saveSettings()
+                                Task { await app.reconnectIfRunning() }
+                            }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+                    Text(app.settings.useSystemProxy
+                         ? "Cloak flips the macOS SOCKS proxy to its local listener on connect, so every app routes through it automatically."
+                         : "System proxy is off. Apps must opt in to the local SOCKS endpoint manually.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+        }
     }
 }

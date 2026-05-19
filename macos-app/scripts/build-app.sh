@@ -47,10 +47,16 @@ ensure_release_assets() {
   "$ROOT/scripts/fetch-xray-vendor.sh"
 }
 
-# Interrupting the script can corrupt SwiftPM's `.build`.
+# Interrupting the script can corrupt SwiftPM's `.build`. Retry guards
+# against a Spotlight / fseventsd race that occasionally lands a new file
+# in the directory mid-delete and aborts a strict `rm -rf` under `set -e`.
 if [[ "${SKIP_SPM_CLEAN:-}" != "1" ]]; then
   echo "→ removing SwiftPM .build (avoids corrupted incremental state)"
-  rm -rf "$ROOT/.build"
+  for _ in 1 2 3; do
+    rm -rf "$ROOT/.build" 2>/dev/null && break
+    sleep 0.5
+  done
+  rm -rf "$ROOT/.build" 2>/dev/null || true
 fi
 
 if [[ -f "$ROOT/logo/Cloak.png" ]]; then
