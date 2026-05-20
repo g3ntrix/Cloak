@@ -685,7 +685,7 @@ final class AppState: ObservableObject {
         let host = settings.resolvedSocksHostForLocalClient
         let port = settings.listenPort
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 600_000_000)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
             await self?.runEgressLookup(proxyHost: host, proxyPort: port)
         }
     }
@@ -698,7 +698,8 @@ final class AppState: ObservableObject {
     }
 
     private func runEgressLookup(proxyHost: String, proxyPort: Int) async {
-        for attempt in 0 ..< 3 {
+        let maxAttempts = 6
+        for attempt in 0 ..< maxAttempts {
             guard status.isRunning else { return }
             do {
                 let r = try await EgressInfoService.fetchEgress(proxyHost: proxyHost, proxyPort: proxyPort)
@@ -708,8 +709,8 @@ final class AppState: ObservableObject {
                 egressLookupMessage = nil
                 return
             } catch {
-                if attempt < 2 {
-                    try? await Task.sleep(nanoseconds: 400_000_000)
+                if attempt < maxAttempts - 1 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                 } else if status.isRunning {
                     egressLookupMessage = error.localizedDescription
                 }

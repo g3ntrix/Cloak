@@ -32,7 +32,9 @@
 - **One-click connect** — شروع/توقف Listener پایتون و Xray از Dashboard یا Menu bar
 - **Profile library** — چسباندن لینک یا Drag-and-Drop فایل متنی (`vless`، `trojan`، `vmess`، `ss`)
 - **Real profile ping** — اندازه‌گیری latency از داخل tunnel هر پروفایل؛ ping همه با امکان لغو؛ حذف پروفایل‌های بدون ping
-- **System proxy toggle** — عبور ترافیک همهٔ app‌های macOS از local SOCKS endpoint کلوک
+- **VPN Tunnel Mode (utun)** — عبور ۱۰۰٪ ترافیک سیستم (TCP و UDP) در لایهٔ شبکه از طریق یک رابط مجازی کاملاً پویا (`utun`)، بدون بروز خطاهای تداخل "resource busy" با سایر برنامه‌های VPN
+- **System proxy toggle** — عبور ترافیک برنامه‌های macOS از پروکسی‌های محلی SOCKS و HTTP کلوک
+- **Auto-DNS Management** — بازنویسی خودکار تنظیمات فعال DNS به سرورهای عمومی ایمن (`1.1.1.1` / `8.8.8.8`) در هنگام برقراری تونل، تخلیه حافظه پنهان DNS و بازیابی یکپارچه پیش‌فرض‌های DHCP در زمان قطع اتصال
 - **LAN sharing** — Listener فقط روی همین مک Bind شود یا روی شبکه در دسترس باشد (Local / LAN)
 - **Egress IP** — نمایش public IP شما از طریق پروفایل فعال در زمان اتصال
 - **Menu bar control** — اتصال، تعویض پروفایل و بازکردن پنجرهٔ اصلی بدون بازماندن دائمی آن
@@ -50,7 +52,7 @@
 1. کلوک را باز کنید و مجوز یک‌بارهٔ Helper را بدهید (Settings).
 2. اگر از پل SNI داخلی استفاده می‌کنید، JSON مربوط به Cloudflare Listener را در **Settings** قرار دهید.
 3. یک پروفایل را انتخاب کنید، سپس در Dashboard روی **Connect** بزنید.
-4. اگر می‌خواهید همهٔ برنامه‌ها به‌صورت خودکار از کلوک استفاده کنند، **System proxy** را روشن کنید.
+4. حالت اتصال را روی **Tunnel** برای تجربه کامل مسیریابی در لایه سیستم (VPN) بگذارید، یا **System proxy** را روشن کنید تا از پروکسی SOCKS/HTTP استفاده شود.
 
 ## ساختار پروژه
 

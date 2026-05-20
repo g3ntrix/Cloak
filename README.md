@@ -33,7 +33,9 @@
 - **One-click connect** — Start/stop the Python listener and Xray from the dashboard or menu bar
 - **Profile library** — Paste links or drag-and-drop a text file (`vless`, `trojan`, `vmess`, `ss`)
 - **Real profile ping** — Measure latency through each profile’s tunnel; ping all with cancel; remove profiles with no ping
-- **System proxy toggle** — Route all macOS apps through Cloak’s local SOCKS endpoint
+- **VPN Tunnel Mode (utun)** — Route 100% of your system traffic (both TCP and UDP) at the network layer through a dynamically allocated virtual interface (`utun`), avoiding "resource busy" conflicts with other VPN clients
+- **System proxy toggle** — Route macOS apps through Cloak’s local SOCKS and HTTP proxy endpoints
+- **Auto-DNS Management** — Automatically overrides active DNS configurations to secure public resolvers (`1.1.1.1` / `8.8.8.8`) during tunnel connection, flushing DNS caches and restoring DHCP defaults seamlessly on stop
 - **LAN sharing** — Bind the listener to this Mac only or expose it on your network (Local / LAN)
 - **Egress IP** — See your public IP through the active profile while connected
 - **Menu bar control** — Connect, switch profiles, and open the main window without keeping it open
@@ -51,7 +53,7 @@ Get the latest **`.dmg`** from [GitHub Releases](https://github.com/g3ntrix/Cloa
 1. Open Cloak and grant the one-time helper permission (Settings).
 2. Paste your Cloudflare listener JSON in **Settings** if you use the bundled SNI bridge.
 3. Select a profile, then **Connect** on the Dashboard.
-4. Turn on **System proxy** if you want every app to use Cloak automatically.
+4. Set the connection mode to **Tunnel** for a full VPN-level system routing experience, or toggle **System proxy** to use the local SOCKS/HTTP proxy.
 
 ## Project structure
 
