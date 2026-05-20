@@ -1,6 +1,7 @@
 import Foundation
 
-/// Builds Xray JSON: SOCKS inbound → VLESS or Trojan outbound, dial address forced to the Python listener (`bridge`).
+/// Builds Xray JSON: local SOCKS/HTTP inbounds → profile outbound, with the dial
+/// address forced to the SNI bridge.
 enum XrayOutboundBuilder {
     enum BuildError: LocalizedError {
         case unsupported(String)
@@ -25,14 +26,29 @@ enum XrayOutboundBuilder {
         ]
 
         switch profile.kind {
-        case .vless:
+        case .vless, .vmess:
+            guard !profile.uuid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw BuildError.unsupported("\(profile.kind.display) profile is missing a UUID.")
+            }
             outbound["protocol"] = "vless"
             var user: [String: Any] = [
                 "id": profile.uuid,
                 "encryption": "none",
             ]
+            if profile.kind == .vmess {
+                outbound["protocol"] = "vmess"
+                user = [
+                    "id": profile.uuid,
+                    "security": "auto",
+                ]
+            }
             if !profile.flow.isEmpty {
                 user["flow"] = profile.flow
+            }
+            if profile.kind == .vless,
+               let packetEncoding = profile.packetEncoding?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !packetEncoding.isEmpty {
+                user["packetEncoding"] = packetEncoding
             }
             outbound["settings"] = [
                 "vnext": [
@@ -44,6 +60,9 @@ enum XrayOutboundBuilder {
                 ],
             ]
         case .trojan:
+            guard !profile.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw BuildError.unsupported("Trojan profile is missing a password.")
+            }
             outbound["protocol"] = "trojan"
             outbound["settings"] = [
                 "servers": [
@@ -54,8 +73,23 @@ enum XrayOutboundBuilder {
                     ],
                 ],
             ]
-        case .vmess, .shadowsocks:
-            throw BuildError.unsupported("Outbound kind \(profile.kind.display) is not supported yet — use VLESS or Trojan.")
+        case .shadowsocks:
+            guard !profile.method.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !profile.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw BuildError.unsupported("Shadowsocks profile is missing method or password.")
+            }
+            outbound["protocol"] = "shadowsocks"
+            outbound["settings"] = [
+                "servers": [
+                    [
+                        "address": dialHost,
+                        "port": dialPort,
+                        "method": profile.method,
+                        "password": profile.password,
+                    ],
+                ],
+            ]
+            outbound.removeValue(forKey: "streamSettings")
         }
 
         let socksInbound: [String: Any] = [
@@ -70,13 +104,25 @@ enum XrayOutboundBuilder {
             ],
         ]
 
-        let inbounds: [[String: Any]] = [socksInbound]
+        let httpInbound: [String: Any] = [
+            "tag": "http-in",
+            "listen": settings.listenHost,
+            "port": settings.httpPort,
+            "protocol": "http",
+            "settings": ["allowTransparent": false],
+            "sniffing": [
+                "enabled": true,
+                "destOverride": ["http", "tls"],
+            ],
+        ]
+
+        let inbounds: [[String: Any]] = [socksInbound, httpInbound]
         let route: [String: Any] = [
             "domainStrategy": "AsIs",
             "rules": [
                 [
                     "type": "field",
-                    "inboundTag": ["socks-in"],
+                    "inboundTag": ["socks-in", "http-in"],
                     "outboundTag": "proxy",
                 ],
             ],
@@ -123,33 +169,54 @@ enum XrayOutboundBuilder {
             ss["wsSettings"] = ws
         case .grpc:
             ss["network"] = "grpc"
-            ss["grpcSettings"] = [
+            var grpc: [String: Any] = [
                 "serviceName": p.transport.serviceName,
-                "multiMode": false,
+                "multiMode": p.transport.mode == "multi",
             ]
+            if let authority = p.transport.authority, !authority.isEmpty {
+                grpc["authority"] = authority
+            }
+            ss["grpcSettings"] = grpc
         case .http:
-            throw BuildError.unsupported("HTTP/2 transport is not wired in Xray generator yet.")
+            ss["network"] = "http"
+            var http: [String: Any] = [:]
+            if !p.transport.path.isEmpty { http["path"] = p.transport.path }
+            if !p.transport.host.isEmpty { http["host"] = [p.transport.host] }
+            ss["httpSettings"] = http
         case .httpupgrade:
             ss["network"] = "httpupgrade"
             var hu: [String: Any] = [:]
             if !p.transport.path.isEmpty { hu["path"] = p.transport.path }
             if !p.transport.host.isEmpty { hu["host"] = p.transport.host }
             ss["httpupgradeSettings"] = hu
+        case .xhttp, .splithttp:
+            ss["network"] = p.transport.kind.rawValue
+            var xhttp: [String: Any] = [:]
+            if !p.transport.path.isEmpty { xhttp["path"] = p.transport.path }
+            if !p.transport.host.isEmpty { xhttp["host"] = p.transport.host }
+            if let mode = p.transport.mode, !mode.isEmpty { xhttp["mode"] = mode }
+            ss["xhttpSettings"] = xhttp
         }
 
         if sec == "tls" {
             ss["security"] = "tls"
             ss["tlsSettings"] = tlsSettings(p)
+        } else if sec == "reality" {
+            ss["security"] = "reality"
+            ss["realitySettings"] = realitySettings(p)
         } else if sec == "none" {
             ss["security"] = "none"
         } else {
-            throw BuildError.unsupported("Only TLS (or none) security is supported for this build — found “\(sec)”.")
+            throw BuildError.unsupported("Unsupported security mode: \(sec).")
         }
 
         return ss
     }
 
     private static func securityMode(_ p: Profile) -> String {
+        if let explicit = p.tls.security?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !explicit.isEmpty {
+            return explicit
+        }
         if p.kind == .trojan { return "tls" }
         return p.tls.enabled ? "tls" : "none"
     }
@@ -173,5 +240,19 @@ enum XrayOutboundBuilder {
             t["fingerprint"] = p.tls.fingerprint
         }
         return t
+    }
+
+    private static func realitySettings(_ p: Profile) -> [String: Any] {
+        var r = tlsSettings(p)
+        if let publicKey = p.tls.publicKey, !publicKey.isEmpty {
+            r["publicKey"] = publicKey
+        }
+        if let shortID = p.tls.shortID, !shortID.isEmpty {
+            r["shortId"] = shortID
+        }
+        if let spiderX = p.tls.spiderX, !spiderX.isEmpty {
+            r["spiderX"] = spiderX
+        }
+        return r
     }
 }

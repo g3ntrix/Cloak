@@ -12,8 +12,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFT_TARGET="SNISpoofing"
+PACKET_TUNNEL_TARGET="PacketTunnel"
 APP_NAME="Cloak"
 BUNDLE_ID="${BUNDLE_ID:-io.github.snispoofinggui.cloak}"
+PACKET_TUNNEL_BUNDLE_ID="${PACKET_TUNNEL_BUNDLE_ID:-${BUNDLE_ID}.PacketTunnel}"
 DIST="$ROOT/dist"
 BUILD_VARIANT="${BUILD_VARIANT:-universal}"
 VERSION="${VERSION:-1.1.0}"
@@ -82,14 +84,16 @@ swift build --package-path "$ROOT" -c release \
   --triple arm64-apple-macosx13.0 \
   --disable-sandbox
 ARM_BIN="$(find "$ROOT/.build" -path '*arm64*release*' -name "$SWIFT_TARGET" -type f -not -path '*dSYM*' | head -1)"
+ARM_TUNNEL_BIN="$(find "$ROOT/.build" -path '*arm64*release*' -name "$PACKET_TUNNEL_TARGET" -type f -not -path '*dSYM*' | head -1)"
 
 echo "→ swift build (x86_64)"
 swift build --package-path "$ROOT" -c release \
   --triple x86_64-apple-macosx13.0 \
   --disable-sandbox
 X86_BIN="$(find "$ROOT/.build" -path '*x86_64*release*' -name "$SWIFT_TARGET" -type f -not -path '*dSYM*' | head -1)"
+X86_TUNNEL_BIN="$(find "$ROOT/.build" -path '*x86_64*release*' -name "$PACKET_TUNNEL_TARGET" -type f -not -path '*dSYM*' | head -1)"
 
-if [[ -z "$ARM_BIN" || -z "$X86_BIN" ]]; then
+if [[ -z "$ARM_BIN" || -z "$X86_BIN" || -z "$ARM_TUNNEL_BIN" || -z "$X86_TUNNEL_BIN" ]]; then
   echo "error: couldn't locate swift build outputs" >&2
   exit 1
 fi
@@ -126,11 +130,12 @@ assemble_one() {
   local xray_src="$3"   # path to xray binary to embed
   local plist_id="$4"
   local bundle_dir="$5" # dirname for *.bundle copy
+  local packet_tunnel_bin="$6"
 
   local APP="$DIST/$stem.app"
   echo "→ assembling $APP"
   rm -rf "$APP"
-  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/PlugIns"
 
   cp "$swift_bin" "$APP/Contents/MacOS/$APP_NAME"
   chmod +x "$APP/Contents/MacOS/$APP_NAME"
@@ -154,6 +159,33 @@ assemble_one() {
   if [[ -f "$ROOT/Sources/SNISpoofing/Resources/Cloak.png" ]]; then
     cp "$ROOT/Sources/SNISpoofing/Resources/Cloak.png" "$APP/Contents/Resources/Cloak.png"
   fi
+
+  APPEX="$APP/Contents/PlugIns/PacketTunnel.appex"
+  mkdir -p "$APPEX/Contents/MacOS"
+  cp "$packet_tunnel_bin" "$APPEX/Contents/MacOS/PacketTunnel"
+  chmod +x "$APPEX/Contents/MacOS/PacketTunnel"
+  cat > "$APPEX/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleDisplayName</key><string>Cloak Packet Tunnel</string>
+    <key>CFBundleExecutable</key><string>PacketTunnel</string>
+    <key>CFBundleIdentifier</key><string>$PACKET_TUNNEL_BUNDLE_ID</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>PacketTunnel</string>
+    <key>CFBundlePackageType</key><string>XPC!</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key><string>com.apple.networkextension.packet-tunnel</string>
+        <key>NSExtensionPrincipalClass</key><string>PacketTunnel.PacketTunnelProvider</string>
+    </dict>
+</dict>
+</plist>
+PLIST
 
   # PyInstaller-frozen listener (per-arch; do not lipo — see build-core.sh).
   CORE_COPIED=0
@@ -199,10 +231,12 @@ assemble_one() {
 PLIST
 
   ENTITLEMENTS="$ROOT/scripts/entitlements.plist"
+  RUNTIME_ENTITLEMENTS="$ROOT/scripts/runtime.entitlements"
+  PACKET_TUNNEL_ENTITLEMENTS="$ROOT/scripts/packet-tunnel.entitlements"
   echo "→ ad-hoc codesigning (hardened runtime)"
   codesign --force --sign - \
     --options runtime \
-    --entitlements "$ENTITLEMENTS" \
+    --entitlements "$RUNTIME_ENTITLEMENTS" \
     --timestamp=none \
     "$APP/Contents/Resources/xray"
   for arch in arm64 x86_64; do
@@ -210,10 +244,20 @@ PLIST
     [[ -e "$bin" ]] || continue
     codesign --force --sign - \
       --options runtime \
-      --entitlements "$ENTITLEMENTS" \
+      --entitlements "$RUNTIME_ENTITLEMENTS" \
       --timestamp=none \
       "$bin"
   done
+  codesign --force --sign - \
+    --options runtime \
+    --entitlements "$PACKET_TUNNEL_ENTITLEMENTS" \
+    --timestamp=none \
+    "$APPEX/Contents/MacOS/PacketTunnel"
+  codesign --force --sign - \
+    --options runtime \
+    --entitlements "$PACKET_TUNNEL_ENTITLEMENTS" \
+    --timestamp=none \
+    "$APPEX"
   codesign --force --sign - \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \
@@ -243,24 +287,30 @@ X86_REL="$(dirname "$X86_BIN")"
 
 case "$BUILD_VARIANT" in
   arm64)
-    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL"
+    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL" "$ARM_TUNNEL_BIN"
     ;;
   x86_64)
-    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL"
+    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL" "$X86_TUNNEL_BIN"
     ;;
   universal)
     UNI_SWIFT="$THIN_DIR/cloak-swift-universal"
     lipo -create "$ARM_BIN" "$X86_BIN" -output "$UNI_SWIFT"
     chmod +x "$UNI_SWIFT"
-    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL"
+    UNI_TUNNEL="$THIN_DIR/packet-tunnel-universal"
+    lipo -create "$ARM_TUNNEL_BIN" "$X86_TUNNEL_BIN" -output "$UNI_TUNNEL"
+    chmod +x "$UNI_TUNNEL"
+    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL" "$UNI_TUNNEL"
     ;;
   all)
-    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL"
-    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL"
+    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL" "$ARM_TUNNEL_BIN"
+    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL" "$X86_TUNNEL_BIN"
     UNI_SWIFT="$THIN_DIR/cloak-swift-universal"
     lipo -create "$ARM_BIN" "$X86_BIN" -output "$UNI_SWIFT"
     chmod +x "$UNI_SWIFT"
-    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL"
+    UNI_TUNNEL="$THIN_DIR/packet-tunnel-universal"
+    lipo -create "$ARM_TUNNEL_BIN" "$X86_TUNNEL_BIN" -output "$UNI_TUNNEL"
+    chmod +x "$UNI_TUNNEL"
+    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL" "$UNI_TUNNEL"
     echo
     echo "✔ Done (BUILD_VARIANT=all):"
     echo "   $DIST/${APP_NAME}-arm64.app"

@@ -141,7 +141,7 @@ struct SettingsView: View {
                     .font(.system(size: 17))
                     .foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("SOCKS listener")
+                    Text("Local proxy listeners")
                         .font(.system(size: 13, weight: .semibold))
                     ListenScopeToggle(exposesToLAN: Binding(
                         get: { app.settings.exposesToLAN },
@@ -154,7 +154,7 @@ struct SettingsView: View {
                         }
                     ))
                     HStack(alignment: .center, spacing: 10) {
-                        Text("Port")
+                        Text("SOCKS")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
                         TextField("", text: proxyPortBinding)
@@ -168,7 +168,21 @@ struct SettingsView: View {
                                     .fill(AppTheme.controlFill(for: colorScheme))
                                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.stroke(for: colorScheme)))
                             )
-                        Text(verbatim: "Listens on \(app.settings.exposesToLAN ? "0.0.0.0" : "127.0.0.1"):\(app.settings.listenPort)")
+                        Text("HTTP")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        TextField("", text: httpPortBinding)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .frame(width: 72)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(AppTheme.controlFill(for: colorScheme))
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.stroke(for: colorScheme)))
+                            )
+                        Text(verbatim: "\(app.settings.exposesToLAN ? "0.0.0.0" : "127.0.0.1"):\(app.settings.listenPort) / \(app.settings.httpPort)")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -299,6 +313,19 @@ struct SettingsView: View {
                 let t = $0.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let v = Int(t), v > 0, v <= 65_535 {
                     app.settings.listenPort = v
+                    app.saveSettings()
+                }
+            }
+        )
+    }
+
+    private var httpPortBinding: Binding<String> {
+        Binding(
+            get: { String(app.settings.httpPort) },
+            set: {
+                let t = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let v = Int(t), v > 0, v <= 65_535 {
+                    app.settings.httpPort = v
                     app.saveSettings()
                 }
             }

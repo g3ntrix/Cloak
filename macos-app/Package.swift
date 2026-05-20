@@ -14,6 +14,10 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]
+        ),
+        .executableTarget(
+            name: "PacketTunnel",
+            path: "PacketTunnel"
         )
     ]
 )

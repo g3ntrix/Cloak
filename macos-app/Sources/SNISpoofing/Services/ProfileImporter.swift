@@ -31,8 +31,8 @@ enum ProfileImporter {
         case parseFailed(String)
         var errorDescription: String? {
             switch self {
-            case .noInput: return "Paste a vless:// or trojan:// link (and optionally the JSON block below it)."
-            case .noURL: return "No vless:// / trojan:// URL found in the input."
+            case .noInput: return "Paste a vless://, vmess://, trojan://, or ss:// link (and optionally the JSON block below it)."
+            case .noURL: return "No vless:// / vmess:// / trojan:// / ss:// URL found in the input."
             case .parseFailed(let s): return s
             }
         }
@@ -125,7 +125,7 @@ enum ProfileImporter {
 
     // MARK: - tokenising helpers
 
-    private static let schemes = ["vless://", "vmess://", "trojan://", "ss://"]
+    private static let schemes = ["vless://", "vmess://", "trojan://", "ss://", "shadowsocks://"]
 
     private static func firstProxyURL(in text: String) -> String? {
         allProxyURLs(in: text).first

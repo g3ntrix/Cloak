@@ -10,10 +10,15 @@ struct AppSettings: Codable, Equatable {
     /// Local SOCKS inbound — Xray listens here. Apps/browsers point at this.
     var listenHost: String = "127.0.0.1"
     var listenPort: Int = 2080
+    /// Local HTTP inbound — used by apps and macOS services that ignore SOCKS.
+    var httpPort: Int = 3080
 
-    /// When enabled, Cloak toggles the macOS system SOCKS proxy so all apps
-    /// route through Xray automatically without manual per-app configuration.
+    /// When enabled, Cloak toggles the macOS system HTTP/HTTPS/SOCKS proxies so
+    /// proxy-aware apps route through Xray without manual per-app configuration.
     var useSystemProxy: Bool = true
+    /// Proxy mode configures macOS proxy settings; tunnel mode uses the bundled
+    /// packet tunnel extension to route traffic without per-app proxy support.
+    var connectionMode: ConnectionMode = .proxy
 
     var activeProfileID: UUID?
     var logLevel: LogLevel = .warn
@@ -36,6 +41,23 @@ struct AppSettings: Codable, Equatable {
         }
     }
 
+    enum ConnectionMode: String, Codable, CaseIterable, Identifiable {
+        case proxy, tunnel
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .proxy: return "Proxy"
+            case .tunnel: return "Tunnel"
+            }
+        }
+        var systemImage: String {
+            switch self {
+            case .proxy: return "switch.2"
+            case .tunnel: return "point.topleft.down.curvedto.point.bottomright.up"
+            }
+        }
+    }
+
     enum LogLevel: String, Codable, CaseIterable, Identifiable {
         case trace, debug, info, warn, error, fatal, panic
         var id: String { rawValue }
@@ -47,7 +69,9 @@ struct AppSettings: Codable, Equatable {
         pythonProjectPath: String? = nil,
         listenHost: String = "127.0.0.1",
         listenPort: Int = 2080,
+        httpPort: Int = 3080,
         useSystemProxy: Bool = true,
+        connectionMode: ConnectionMode = .proxy,
         activeProfileID: UUID? = nil,
         logLevel: LogLevel = .warn,
         logsEnabled: Bool = false,
@@ -56,7 +80,9 @@ struct AppSettings: Codable, Equatable {
         self.pythonProjectPath = pythonProjectPath
         self.listenHost = listenHost
         self.listenPort = listenPort
+        self.httpPort = httpPort
         self.useSystemProxy = useSystemProxy
+        self.connectionMode = connectionMode
         self.activeProfileID = activeProfileID
         self.logLevel = logLevel
         self.logsEnabled = logsEnabled
@@ -74,8 +100,8 @@ struct AppSettings: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case pythonProjectPath, listenHost, listenPort
-        case useSystemProxy
+        case pythonProjectPath, listenHost, listenPort, httpPort
+        case useSystemProxy, connectionMode
         case activeProfileID, logLevel, logsEnabled, appearanceMode
     }
 
@@ -84,7 +110,9 @@ struct AppSettings: Codable, Equatable {
         pythonProjectPath = try c.decodeIfPresent(String.self, forKey: .pythonProjectPath)
         listenHost = try c.decodeIfPresent(String.self, forKey: .listenHost) ?? "127.0.0.1"
         listenPort = try c.decodeIfPresent(Int.self, forKey: .listenPort) ?? 2080
+        httpPort = try c.decodeIfPresent(Int.self, forKey: .httpPort) ?? 3080
         useSystemProxy = try c.decodeIfPresent(Bool.self, forKey: .useSystemProxy) ?? true
+        connectionMode = try c.decodeIfPresent(ConnectionMode.self, forKey: .connectionMode) ?? .proxy
         activeProfileID = try c.decodeIfPresent(UUID.self, forKey: .activeProfileID)
         logLevel = try c.decodeIfPresent(LogLevel.self, forKey: .logLevel) ?? .warn
         logsEnabled = try c.decodeIfPresent(Bool.self, forKey: .logsEnabled) ?? false
@@ -97,6 +125,10 @@ struct AppSettings: Codable, Equatable {
         if h.isEmpty || h == "0.0.0.0" || h == "*" { return "127.0.0.1" }
         if h == "::" { return "::1" }
         return listenHost.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var resolvedHTTPHostForLocalClient: String {
+        resolvedSocksHostForLocalClient
     }
 
     /// Legacy dev override for an external Python tree (unused by the shipped frozen listener).

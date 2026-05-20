@@ -6,13 +6,13 @@ enum SystemProxy {
 
     enum Result { case ok, failed(String) }
 
-    /// Routes all system traffic through `host:port`.
-    static func enable(host: String, port: Int) -> Result {
+    /// Routes system proxy-aware traffic through Cloak's HTTP/HTTPS and SOCKS inbounds.
+    static func enable(host: String, socksPort: Int, httpPort: Int) -> Result {
         let h = normalizeHost(host)
         guard SudoPrivilege.proxyHelperReady() else {
             return .failed("Proxy helper not installed. Open Settings → Grant permission.")
         }
-        let rc = SudoPrivilege.runProxyHelper(["enable", h, String(port)])
+        let rc = SudoPrivilege.runProxyHelper(["enable", h, String(socksPort), String(httpPort)])
         return rc == 0 ? .ok : .failed("cloak-proxy enable exited \(rc)")
     }
 
@@ -46,6 +46,8 @@ enum SystemProxy {
         }
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         return out.contains("SOCKSEnable : 1")
+            || out.contains("HTTPEnable : 1")
+            || out.contains("HTTPSEnable : 1")
     }
 
     private static func normalizeHost(_ host: String) -> String {

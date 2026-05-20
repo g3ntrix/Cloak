@@ -204,24 +204,26 @@ struct DashboardView: View {
                 Image(systemName: "wifi.router")
                     .font(.system(size: 17))
                     .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("LAN address")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(verbatim: "\(ip):\(app.settings.listenPort)")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("LAN sharing")
+                            .font(.system(size: 12, weight: .semibold))
+                        StatusPill(text: bindsAllInterfaces ? "On" : "Local", tint: bindsAllInterfaces ? .green : .secondary)
+                    }
+                    Text(verbatim: ip)
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
                         .textSelection(.enabled)
-                    Text(bindsAllInterfaces
-                         ? "Other devices on your network can use this SOCKS endpoint."
-                         : "Enable LAN in Settings to share the proxy with other devices.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        EndpointChip(label: "SOCKS", value: "\(app.settings.listenPort)", tint: .orange)
+                        EndpointChip(label: "HTTP", value: "\(app.settings.httpPort)", tint: .cyan)
+                    }
                 }
                 Spacer(minLength: 0)
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
-                    pb.setString("\(ip):\(app.settings.listenPort)", forType: .string)
+                    pb.setString("SOCKS \(ip):\(app.settings.listenPort)\nHTTP \(ip):\(app.settings.httpPort)", forType: .string)
                     withAnimation { copiedLan = true }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         withAnimation { copiedLan = false }
@@ -230,8 +232,9 @@ struct DashboardView: View {
                     Image(systemName: copiedLan ? "checkmark" : "doc.on.doc")
                 }
                 .buttonStyle(.borderless)
-                .help("Copy address")
+                .help("Copy LAN endpoints")
             }
+            .frame(minHeight: 82, alignment: .center)
         }
     }
 
@@ -429,34 +432,111 @@ struct SystemProxyCard: View {
     var body: some View {
         Card {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "switch.2")
+                Image(systemName: app.settings.connectionMode.systemImage)
                     .font(.system(size: 17))
                     .foregroundStyle(.cyan)
-                VStack(alignment: .leading, spacing: 8) {
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("System proxy")
+                        Text("Routing")
                             .font(.system(size: 12, weight: .semibold))
                         Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { app.settings.useSystemProxy },
-                            set: {
-                                app.settings.useSystemProxy = $0
-                                app.saveSettings()
-                                Task { await app.reconnectIfRunning() }
-                            }
-                        ))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
+                        if app.settings.connectionMode == .proxy {
+                            Toggle("", isOn: Binding(
+                                get: { app.settings.useSystemProxy },
+                                set: {
+                                    app.settings.useSystemProxy = $0
+                                    app.saveSettings()
+                                    Task { await app.reconnectIfRunning() }
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        }
                     }
-                    Text(app.settings.useSystemProxy
-                         ? "On Connect, macOS routes all apps through Cloak's local SOCKS listener."
-                         : "Off. Apps must point at the local SOCKS endpoint manually.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Picker("", selection: Binding(
+                        get: { app.settings.connectionMode },
+                        set: {
+                            app.settings.connectionMode = $0
+                            app.saveSettings()
+                            Task { await app.reconnectIfRunning() }
+                        }
+                    )) {
+                        ForEach(AppSettings.ConnectionMode.allCases) { mode in
+                            Label(mode.label, systemImage: mode.systemImage).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    HStack(spacing: 6) {
+                        RouteSummaryChip(text: app.settings.connectionMode == .tunnel
+                                         ? "Packet tunnel"
+                                         : (app.settings.useSystemProxy ? "HTTP/S + SOCKS" : "Manual apps"))
+                        if app.settings.connectionMode == .proxy && app.settings.useSystemProxy {
+                            RouteSummaryChip(text: "System on")
+                        }
+                    }
                 }
                 Spacer(minLength: 0)
             }
+            .frame(minHeight: 82, alignment: .top)
         }
+    }
+}
+
+private struct EndpointChip: View {
+    let label: String
+    let value: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tint)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(0.12))
+        )
+    }
+}
+
+private struct StatusPill: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.12))
+            )
+    }
+}
+
+private struct RouteSummaryChip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
     }
 }

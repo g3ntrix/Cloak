@@ -1,8 +1,8 @@
 import Foundation
 
 /// A proxy-client profile. One is active at a time; Xray outbound is built from it (dial rewritten to the listener).
-/// Phase 1 focuses on VLESS (the protocol the user pasted). VMess/Trojan/Shadowsocks
-/// are modelled but only VLESS is fully wired into the generator.
+/// Xray outbound profile. Cloak rewrites the dial address to the local SNI bridge,
+/// but preserves the protocol, transport, TLS/Reality, and host/SNI details here.
 struct Profile: Codable, Equatable, Identifiable {
     var id: UUID = UUID()
     var name: String
@@ -40,10 +40,16 @@ struct Profile: Codable, Equatable, Identifiable {
 
     struct TLS: Codable, Equatable {
         var enabled: Bool = true
+        /// Explicit stream security from the share link (`tls`, `reality`, `none`).
+        /// Older saved profiles leave this empty and fall back to `enabled`.
+        var security: String? = nil
         var serverName: String = ""
         var allowInsecure: Bool = false
         var fingerprint: String = "chrome"   // utls fingerprint
         var alpn: [String] = []
+        var publicKey: String? = nil          // Reality pbk
+        var shortID: String? = nil            // Reality sid
+        var spiderX: String? = nil            // Reality spx
 
         /// When enabled, the Python layer prepends a forged ClientHello using `fakeSNI`
         /// (see listener `config.json` / Settings). Distinct from TLS serverName on the wire.
@@ -69,9 +75,12 @@ struct Profile: Codable, Equatable, Identifiable {
         var path: String = ""
         var host: String = ""
         var serviceName: String = ""   // grpc
+        var authority: String? = nil
+        var headerType: String? = nil
+        var mode: String? = nil
 
         enum Kind: String, Codable, CaseIterable, Identifiable {
-            case tcp, ws, grpc, http, httpupgrade
+            case tcp, ws, grpc, http, httpupgrade, xhttp, splithttp
             var id: String { rawValue }
             var display: String {
                 switch self {
@@ -80,6 +89,8 @@ struct Profile: Codable, Equatable, Identifiable {
                 case .grpc: return "gRPC"
                 case .http: return "HTTP/2"
                 case .httpupgrade: return "HTTPUpgrade"
+                case .xhttp: return "XHTTP"
+                case .splithttp: return "SplitHTTP"
                 }
             }
         }

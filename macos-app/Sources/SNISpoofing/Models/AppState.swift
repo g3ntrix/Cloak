@@ -59,8 +59,11 @@ final class AppState: ObservableObject {
     private let store = ConfigStore()
     private let python = PythonListener()
     private let xray = XrayCoreManager()
+    private let packetTunnel = PacketTunnelManager()
     /// Tracks whether we flipped the system SOCKS proxy on (must be flipped back off on stop).
     private var systemProxyActive = false
+    /// Tracks whether we started the NetworkExtension packet tunnel.
+    private var tunnelActive = false
     /// True when we started the Python listener only for Profiles ping (not full VPN).
     private var listenerStartedForPingOnly = false
     private var sessionBaselineRx: UInt64 = 0
@@ -127,6 +130,10 @@ final class AppState: ObservableObject {
         if systemProxyActive {
             SystemProxy.disableSync()
             systemProxyActive = false
+        }
+        if tunnelActive {
+            packetTunnel.stopSync()
+            tunnelActive = false
         }
         xray.stopSync()
         python.stop()
@@ -264,23 +271,24 @@ final class AppState: ObservableObject {
             return
         }
 
-        switch profile.kind {
-        case .vless, .trojan:
-            break
-        case .vmess, .shadowsocks:
-            status = .error("This profile type isn't supported yet. Use a VLESS or Trojan config.")
-            return
-        }
-
-
-        let want = settings.listenPort
-        let free = PortAvailability.firstAvailable(
-            preferred: want,
+        let wantedSocks = settings.listenPort
+        let freeSocks = PortAvailability.firstAvailable(
+            preferred: wantedSocks,
             host: settings.listenHost,
             range: 2079 ... 21_999
         )
-        if free != want {
-            settings.listenPort = free
+        if freeSocks != wantedSocks {
+            settings.listenPort = freeSocks
+            saveSettings()
+        }
+        let wantedHTTP = settings.httpPort == settings.listenPort ? settings.listenPort + 1000 : settings.httpPort
+        let freeHTTP = PortAvailability.firstAvailable(
+            preferred: wantedHTTP,
+            host: settings.listenHost,
+            range: 3079 ... 31_999
+        )
+        if freeHTTP != settings.httpPort {
+            settings.httpPort = freeHTTP
             saveSettings()
         }
 
@@ -311,9 +319,13 @@ final class AppState: ObservableObject {
             // traffic races the listener coming up and looks like a failure.
             try await Task.sleep(nanoseconds: 400_000_000)
 
-            if settings.useSystemProxy {
+            if settings.connectionMode == .tunnel {
+                let tunnelConfig = makeTunnelConfiguration()
+                _ = try await packetTunnel.start(configuration: tunnelConfig)
+                tunnelActive = true
+            } else if settings.useSystemProxy {
                 let host = settings.resolvedSocksHostForLocalClient
-                switch SystemProxy.enable(host: host, port: settings.listenPort) {
+                switch SystemProxy.enable(host: host, socksPort: settings.listenPort, httpPort: settings.httpPort) {
                 case .ok:
                     systemProxyActive = true
                 case .failed(let msg):
@@ -343,6 +355,10 @@ final class AppState: ObservableObject {
                 SystemProxy.disableSync()
                 systemProxyActive = false
             }
+            if tunnelActive {
+                await packetTunnel.stop()
+                tunnelActive = false
+            }
             await stopInternal()
             status = .error(error.localizedDescription)
             startedAt = nil
@@ -365,12 +381,37 @@ final class AppState: ObservableObject {
     }
 
     private func stopInternal() async {
+        if tunnelActive {
+            await packetTunnel.stop()
+            tunnelActive = false
+        }
         if systemProxyActive {
             SystemProxy.disableSync()
             systemProxyActive = false
         }
         await xray.stop()
         python.stop()
+    }
+
+    private func makeTunnelConfiguration() -> TunnelConfiguration {
+        let excluded = [listenerProject.CONNECT_IP]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return TunnelConfiguration(
+            listenHost: listenerProject.resolvedDialHost,
+            listenPort: listenerProject.LISTEN_PORT,
+            connectIP: listenerProject.CONNECT_IP,
+            connectPort: listenerProject.CONNECT_PORT,
+            upstreamIP: listenerProject.resolvedDialHost,
+            upstreamPort: listenerProject.LISTEN_PORT,
+            fakeSNI: listenerProject.FAKE_SNI,
+            logLevel: settings.logLevel == .debug || settings.logLevel == .trace ? .debug : .info,
+            connectionMode: .tunnel,
+            httpProxyPort: settings.httpPort,
+            socksProxyPort: settings.listenPort,
+            dnsServers: ["1.1.1.1", "8.8.8.8"],
+            excludedIPv4Addresses: excluded
+        )
     }
 
     // MARK: - Bandwidth sampler
@@ -536,12 +577,6 @@ final class AppState: ObservableObject {
 
     /// Ping while listener is already up (batch path): only cycle Xray per profile.
     private func pingProfileViaBatch(_ profile: Profile) async -> RealPingService.Result {
-        switch profile.kind {
-        case .vless, .trojan: break
-        case .vmess, .shadowsocks:
-            return RealPingService.Result(millis: nil, error: "unsupported")
-        }
-
         let socksHost = settings.resolvedSocksHostForLocalClient
         let socksPort = settings.listenPort
 
@@ -567,12 +602,6 @@ final class AppState: ObservableObject {
     /// Brings up the Python listener and Xray for `profile`, measures latency through
     /// the local SOCKS hop, then tears down anything started only for this probe.
     func pingProfile(_ profile: Profile) async -> RealPingService.Result {
-        switch profile.kind {
-        case .vless, .trojan: break
-        case .vmess, .shadowsocks:
-            return RealPingService.Result(millis: nil, error: "unsupported")
-        }
-
         let socksHost = settings.resolvedSocksHostForLocalClient
         let socksPort = settings.listenPort
 

@@ -13,7 +13,7 @@ enum SudoPrivilege {
     static let wrapperPath = "/usr/local/bin/cloak-listener"
     static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
     /// Bumped whenever any embedded script changes — forces re-install.
-    static let wrapperVersion = "8"
+    static let wrapperVersion = "9"
 
     enum SudoError: LocalizedError {
         case promptCancelled
@@ -134,23 +134,29 @@ enum SudoPrivilege {
 
         let proxyScript = """
         #!/bin/bash
-        # cloak-proxy: scoped wrapper that toggles the macOS system SOCKS proxy
+        # cloak-proxy: scoped wrapper that toggles the macOS system HTTP/HTTPS/SOCKS proxies
         # on every active network service via the whitelisted `networksetup`
         # subcommands. Sudoers grants NOPASSWD only for THIS path.
         set -euo pipefail
         if [ "${1:-}" = "--self-check" ]; then echo "\(wrapperVersion)"; exit 0; fi
         ACTION="${1:-}"
         HOST="${2:-}"
-        PORT="${3:-}"
+        SOCKS_PORT="${3:-}"
+        HTTP_PORT="${4:-$SOCKS_PORT}"
         case "$ACTION" in
           enable)
-            if [ -z "$HOST" ] || [ -z "$PORT" ]; then
-              echo "usage: $0 enable <host> <port>" >&2; exit 1
+            if [ -z "$HOST" ] || [ -z "$SOCKS_PORT" ] || [ -z "$HTTP_PORT" ]; then
+              echo "usage: $0 enable <host> <socks-port> <http-port>" >&2; exit 1
             fi
             /usr/sbin/networksetup -listallnetworkservices \\
               | /usr/bin/grep -v '^[*]' | /usr/bin/tail -n +2 \\
               | while IFS= read -r svc; do
-                  /usr/sbin/networksetup -setsocksfirewallproxy "$svc" "$HOST" "$PORT" off 2>/dev/null || true
+                  /usr/sbin/networksetup -setproxybypassdomains "$svc" localhost 127.0.0.1 ::1 2>/dev/null || true
+                  /usr/sbin/networksetup -setwebproxy "$svc" "$HOST" "$HTTP_PORT" 2>/dev/null || true
+                  /usr/sbin/networksetup -setsecurewebproxy "$svc" "$HOST" "$HTTP_PORT" 2>/dev/null || true
+                  /usr/sbin/networksetup -setsocksfirewallproxy "$svc" "$HOST" "$SOCKS_PORT" off 2>/dev/null || true
+                  /usr/sbin/networksetup -setwebproxystate "$svc" on 2>/dev/null || true
+                  /usr/sbin/networksetup -setsecurewebproxystate "$svc" on 2>/dev/null || true
                   /usr/sbin/networksetup -setsocksfirewallproxystate "$svc" on 2>/dev/null || true
                 done
             ;;
@@ -158,11 +164,13 @@ enum SudoPrivilege {
             /usr/sbin/networksetup -listallnetworkservices \\
               | /usr/bin/grep -v '^[*]' | /usr/bin/tail -n +2 \\
               | while IFS= read -r svc; do
+                  /usr/sbin/networksetup -setwebproxystate "$svc" off 2>/dev/null || true
+                  /usr/sbin/networksetup -setsecurewebproxystate "$svc" off 2>/dev/null || true
                   /usr/sbin/networksetup -setsocksfirewallproxystate "$svc" off 2>/dev/null || true
                 done
             ;;
           *)
-            echo "usage: $0 enable <host> <port> | disable" >&2; exit 1
+            echo "usage: $0 enable <host> <socks-port> <http-port> | disable" >&2; exit 1
             ;;
         esac
         """
