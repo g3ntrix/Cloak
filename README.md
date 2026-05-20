@@ -1,5 +1,7 @@
 # Cloak
 
+[فارسی (Persian)](README.fa.md)
+
 **Cloak** is a macOS app that routes traffic through a local SNI-spoofing bridge and an embedded **Xray** core. Import CDN profiles (VLESS, Trojan, and more), connect with one click, and optionally send all system traffic through the local SOCKS proxy.
 
 
@@ -48,9 +50,8 @@ Get the latest **`.dmg`** from [GitHub Releases](https://github.com/g3ntrix/Cloa
 
 1. Open Cloak and grant the one-time helper permission (Settings).
 2. Paste your Cloudflare listener JSON in **Settings** if you use the bundled SNI bridge.
-3. **Add** profiles (paste URIs or drop a `.txt` file on the Profiles tab).
-4. Select a profile, then **Connect** on the Dashboard.
-5. Turn on **System proxy** if you want every app to use Cloak automatically.
+3. Select a profile, then **Connect** on the Dashboard.
+4. Turn on **System proxy** if you want every app to use Cloak automatically.
 
 ## Project structure
 
