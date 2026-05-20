@@ -18,10 +18,9 @@ struct SettingsView: View {
                 appearanceCard
                 HStack(alignment: .top, spacing: 14) {
                     cloudflareCard
-                        .frame(maxWidth: .infinity, alignment: .top)
                     proxyCard
-                        .frame(maxWidth: .infinity, alignment: .top)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 permissionsCard
 
                 if showAdvanced {
@@ -85,7 +84,7 @@ struct SettingsView: View {
     }
 
     private var cloudflareCard: some View {
-        Card {
+        Card(maxHeight: .infinity) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Label("Cloudflare config", systemImage: "doc.text")
@@ -139,7 +138,7 @@ struct SettingsView: View {
     }
 
     private var proxyCard: some View {
-        Card {
+        Card(maxHeight: .infinity) {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 17))

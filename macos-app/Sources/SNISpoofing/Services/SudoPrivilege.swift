@@ -15,7 +15,7 @@ enum SudoPrivilege {
     static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
     static let tunHelperPath = "/usr/local/bin/cloak-tun"
     /// Bumped whenever any embedded script changes — forces re-install.
-    static let wrapperVersion = "10"
+    static let wrapperVersion = "12"
 
     enum SudoError: LocalizedError {
         case promptCancelled
@@ -256,23 +256,30 @@ enum SudoPrivilege {
               echo "could not detect current default gateway" >&2
               exit 1
             fi
-            /usr/bin/printf 'gw=%s\\nif=%s\\nconnect_ip=%s\\ntun=%s\\n' \\
-              "$DEFAULT_GW" "$DEFAULT_IF" "$CONNECT_IP" "$TUN_NAME" > "$STATE_FILE"
             if [ -n "$CONNECT_IP" ]; then
               /sbin/route -nq add -host "$CONNECT_IP" "$DEFAULT_GW" >/dev/null 2>&1 \\
                 || /sbin/route -nq change -host "$CONNECT_IP" "$DEFAULT_GW" >/dev/null 2>&1 || true
             fi
+            utun_before="$(/sbin/ifconfig -l | /usr/bin/tr ' ' '\\n' | /usr/bin/grep '^utun')"
             : > "$LOG_FILE"
             nohup "$TUN2SOCKS_BIN" \\
-              -device "$TUN_NAME" \\
+              -device "utun" \\
               -proxy "socks5://$SOCKS_HOST:$SOCKS_PORT" \\
               -loglevel "$LOGLEVEL" \\
               >> "$LOG_FILE" 2>&1 &
             T2S_PID=$!
             echo "$T2S_PID" > "$PID_FILE"
-            # Wait up to ~3s for the utun device to appear.
+            # Wait up to ~3s for the dynamic utun device to appear.
+            TUN_NAME=""
             for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-              if /sbin/ifconfig "$TUN_NAME" >/dev/null 2>&1; then break; fi
+              utun_after="$(/sbin/ifconfig -l | /usr/bin/tr ' ' '\\n' | /usr/bin/grep '^utun')"
+              for dev in $utun_after; do
+                if ! echo "$utun_before" | /usr/bin/grep -q "^$dev$"; then
+                  TUN_NAME="$dev"
+                  break
+                fi
+              done
+              if [ -n "$TUN_NAME" ]; then break; fi
               if ! kill -0 "$T2S_PID" 2>/dev/null; then
                 echo "tun2socks exited early. Tail of $LOG_FILE:" >&2
                 /usr/bin/tail -n 40 "$LOG_FILE" >&2 || true
@@ -280,15 +287,23 @@ enum SudoPrivilege {
               fi
               sleep 0.25
             done
-            if ! /sbin/ifconfig "$TUN_NAME" >/dev/null 2>&1; then
-              echo "$TUN_NAME never came up; killing tun2socks" >&2
+            if [ -z "$TUN_NAME" ]; then
+              echo "No new utun device came up; killing tun2socks" >&2
               kill "$T2S_PID" 2>/dev/null || true
               rm -f "$PID_FILE"
               exit 1
             fi
+            /usr/bin/printf 'gw=%s\\nif=%s\\nconnect_ip=%s\\ntun=%s\\n' \\
+              "$DEFAULT_GW" "$DEFAULT_IF" "$CONNECT_IP" "$TUN_NAME" > "$STATE_FILE"
             /sbin/ifconfig "$TUN_NAME" inet "$TUN_IP" "$TUN_IP" netmask "$TUN_NETMASK" up
             /sbin/route -nq delete default >/dev/null 2>&1 || true
             /sbin/route -nq add default -interface "$TUN_NAME"
+            /usr/sbin/networksetup -listallnetworkservices \\
+              | /usr/bin/grep -v '^[*]' | /usr/bin/tail -n +2 \\
+              | while IFS= read -r svc; do
+                  /usr/sbin/networksetup -setdnsservers "$svc" 1.1.1.1 8.8.8.8 2>/dev/null || true
+                done
+            /usr/bin/killall -HUP mDNSResponder >/dev/null 2>&1 || true
             echo "$TUN_NAME"
             ;;
           stop)
@@ -316,6 +331,12 @@ enum SudoPrivilege {
               fi
               rm -f "$STATE_FILE"
             fi
+            /usr/sbin/networksetup -listallnetworkservices \\
+              | /usr/bin/grep -v '^[*]' | /usr/bin/tail -n +2 \\
+              | while IFS= read -r svc; do
+                  /usr/sbin/networksetup -setdnsservers "$svc" empty 2>/dev/null || true
+                done
+            /usr/bin/killall -HUP mDNSResponder >/dev/null 2>&1 || true
             ;;
           status)
             if [ -f "$PID_FILE" ]; then

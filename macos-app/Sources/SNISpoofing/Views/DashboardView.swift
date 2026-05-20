@@ -314,11 +314,13 @@ struct DashboardView: View {
 
 struct Card<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
+    var alignment: Alignment = .leading
+    var maxHeight: CGFloat? = nil
     @ViewBuilder var content: () -> Content
     var body: some View {
         content()
             .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: alignment)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(AppTheme.cardFill(for: colorScheme))
