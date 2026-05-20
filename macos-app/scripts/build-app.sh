@@ -12,14 +12,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFT_TARGET="SNISpoofing"
-PACKET_TUNNEL_TARGET="PacketTunnel"
 APP_NAME="Cloak"
 BUNDLE_ID="${BUNDLE_ID:-io.github.snispoofinggui.cloak}"
-PACKET_TUNNEL_BUNDLE_ID="${PACKET_TUNNEL_BUNDLE_ID:-${BUNDLE_ID}.PacketTunnel}"
 DIST="$ROOT/dist"
 BUILD_VARIANT="${BUILD_VARIANT:-universal}"
 VERSION="${VERSION:-1.1.0}"
 VENDOR_XRAY="$ROOT/bundle/xray"
+VENDOR_TUN2SOCKS="$ROOT/bundle/tun2socks"
 
 ensure_release_assets() {
   local need_vendor=0
@@ -31,8 +30,12 @@ ensure_release_assets() {
   if ! compgen -G "$ROOT/assets/scapy-*.whl" >/dev/null 2>&1; then
     need_wheel=1
   fi
+  local need_tun2socks=0
+  if [[ ! -x "$VENDOR_TUN2SOCKS/tun2socks-arm64" || ! -x "$VENDOR_TUN2SOCKS/tun2socks-x86_64" ]]; then
+    need_tun2socks=1
+  fi
 
-  if [[ "$need_vendor" -eq 0 && "$need_wheel" -eq 0 ]]; then
+  if [[ "$need_vendor" -eq 0 && "$need_wheel" -eq 0 && "$need_tun2socks" -eq 0 ]]; then
     return
   fi
 
@@ -40,13 +43,20 @@ ensure_release_assets() {
     echo "error: release assets are missing and SKIP_ASSETS=1." >&2
     echo "  Expected: $VENDOR_XRAY/{xray,geoip.dat,geosite.dat}" >&2
     echo "  Expected: $ROOT/assets/scapy-*.whl" >&2
-    echo "  Run: $ROOT/scripts/fetch-release-assets.sh && $ROOT/scripts/fetch-xray-vendor.sh" >&2
+    echo "  Expected: $VENDOR_TUN2SOCKS/{tun2socks-arm64,tun2socks-x86_64}" >&2
+    echo "  Run: $ROOT/scripts/fetch-release-assets.sh && $ROOT/scripts/fetch-xray-vendor.sh && $ROOT/scripts/fetch-tun2socks.sh" >&2
     exit 1
   fi
 
-  echo "→ release assets missing; preparing Xray/scapy assets"
-  "$ROOT/scripts/fetch-release-assets.sh"
-  "$ROOT/scripts/fetch-xray-vendor.sh"
+  if [[ "$need_vendor" -eq 1 || "$need_wheel" -eq 1 ]]; then
+    echo "→ release assets missing; preparing Xray/scapy assets"
+    "$ROOT/scripts/fetch-release-assets.sh"
+    "$ROOT/scripts/fetch-xray-vendor.sh"
+  fi
+  if [[ "$need_tun2socks" -eq 1 ]]; then
+    echo "→ tun2socks missing; fetching xjasonlyu/tun2socks"
+    "$ROOT/scripts/fetch-tun2socks.sh"
+  fi
 }
 
 # Interrupting the script can corrupt SwiftPM's `.build`. Retry guards
@@ -80,20 +90,18 @@ if [[ ! -x "$ROOT/bundle/cloak-core-arm64" && ! -x "$ROOT/bundle/cloak-core-x86_
 fi
 
 echo "→ swift build (arm64)"
-swift build --package-path "$ROOT" -c release \
+swift build --package-path "$ROOT" --product "$SWIFT_TARGET" -c release \
   --triple arm64-apple-macosx13.0 \
   --disable-sandbox
 ARM_BIN="$(find "$ROOT/.build" -path '*arm64*release*' -name "$SWIFT_TARGET" -type f -not -path '*dSYM*' | head -1)"
-ARM_TUNNEL_BIN="$(find "$ROOT/.build" -path '*arm64*release*' -name "$PACKET_TUNNEL_TARGET" -type f -not -path '*dSYM*' | head -1)"
 
 echo "→ swift build (x86_64)"
-swift build --package-path "$ROOT" -c release \
+swift build --package-path "$ROOT" --product "$SWIFT_TARGET" -c release \
   --triple x86_64-apple-macosx13.0 \
   --disable-sandbox
 X86_BIN="$(find "$ROOT/.build" -path '*x86_64*release*' -name "$SWIFT_TARGET" -type f -not -path '*dSYM*' | head -1)"
-X86_TUNNEL_BIN="$(find "$ROOT/.build" -path '*x86_64*release*' -name "$PACKET_TUNNEL_TARGET" -type f -not -path '*dSYM*' | head -1)"
 
-if [[ -z "$ARM_BIN" || -z "$X86_BIN" || -z "$ARM_TUNNEL_BIN" || -z "$X86_TUNNEL_BIN" ]]; then
+if [[ -z "$ARM_BIN" || -z "$X86_BIN" ]]; then
   echo "error: couldn't locate swift build outputs" >&2
   exit 1
 fi
@@ -102,6 +110,13 @@ if [[ ! -x "$VENDOR_XRAY/xray" || ! -f "$VENDOR_XRAY/geoip.dat" || ! -f "$VENDOR
   echo "error: missing vendored Xray files." >&2
   echo "  Run: $ROOT/scripts/fetch-xray-vendor.sh" >&2
   echo "  Expected: $VENDOR_XRAY/{xray,geoip.dat,geosite.dat}" >&2
+  exit 1
+fi
+
+if [[ ! -x "$VENDOR_TUN2SOCKS/tun2socks-arm64" || ! -x "$VENDOR_TUN2SOCKS/tun2socks-x86_64" ]]; then
+  echo "error: missing vendored tun2socks binaries." >&2
+  echo "  Run: $ROOT/scripts/fetch-tun2socks.sh" >&2
+  echo "  Expected: $VENDOR_TUN2SOCKS/{tun2socks-arm64,tun2socks-x86_64}" >&2
   exit 1
 fi
 
@@ -130,12 +145,11 @@ assemble_one() {
   local xray_src="$3"   # path to xray binary to embed
   local plist_id="$4"
   local bundle_dir="$5" # dirname for *.bundle copy
-  local packet_tunnel_bin="$6"
 
   local APP="$DIST/$stem.app"
   echo "→ assembling $APP"
   rm -rf "$APP"
-  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/PlugIns"
+  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
   cp "$swift_bin" "$APP/Contents/MacOS/$APP_NAME"
   chmod +x "$APP/Contents/MacOS/$APP_NAME"
@@ -144,6 +158,17 @@ assemble_one() {
   cp "$VENDOR_XRAY/geoip.dat" "$APP/Contents/Resources/geoip.dat"
   cp "$VENDOR_XRAY/geosite.dat" "$APP/Contents/Resources/geosite.dat"
   chmod +x "$APP/Contents/Resources/xray"
+
+  # tun2socks binaries (per-arch). The Swift side picks the right one at
+  # runtime via Bundle.main resource lookup. Don't lipo — keep stand-alone so
+  # the helper can pass an explicit path to sudo.
+  for arch in arm64 x86_64; do
+    src="$VENDOR_TUN2SOCKS/tun2socks-$arch"
+    if [[ -x "$src" ]]; then
+      cp "$src" "$APP/Contents/Resources/tun2socks-$arch"
+      chmod +x "$APP/Contents/Resources/tun2socks-$arch"
+    fi
+  done
 
   for b in "$bundle_dir"/*.bundle; do
     [[ -e "$b" ]] || continue
@@ -159,33 +184,6 @@ assemble_one() {
   if [[ -f "$ROOT/Sources/SNISpoofing/Resources/Cloak.png" ]]; then
     cp "$ROOT/Sources/SNISpoofing/Resources/Cloak.png" "$APP/Contents/Resources/Cloak.png"
   fi
-
-  APPEX="$APP/Contents/PlugIns/PacketTunnel.appex"
-  mkdir -p "$APPEX/Contents/MacOS"
-  cp "$packet_tunnel_bin" "$APPEX/Contents/MacOS/PacketTunnel"
-  chmod +x "$APPEX/Contents/MacOS/PacketTunnel"
-  cat > "$APPEX/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleDisplayName</key><string>Cloak Packet Tunnel</string>
-    <key>CFBundleExecutable</key><string>PacketTunnel</string>
-    <key>CFBundleIdentifier</key><string>$PACKET_TUNNEL_BUNDLE_ID</string>
-    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleName</key><string>PacketTunnel</string>
-    <key>CFBundlePackageType</key><string>XPC!</string>
-    <key>CFBundleShortVersionString</key><string>$VERSION</string>
-    <key>CFBundleVersion</key><string>1</string>
-    <key>NSExtension</key>
-    <dict>
-        <key>NSExtensionPointIdentifier</key><string>com.apple.networkextension.packet-tunnel</string>
-        <key>NSExtensionPrincipalClass</key><string>PacketTunnel.PacketTunnelProvider</string>
-    </dict>
-</dict>
-</plist>
-PLIST
 
   # PyInstaller-frozen listener (per-arch; do not lipo — see build-core.sh).
   CORE_COPIED=0
@@ -232,7 +230,6 @@ PLIST
 
   ENTITLEMENTS="$ROOT/scripts/entitlements.plist"
   RUNTIME_ENTITLEMENTS="$ROOT/scripts/runtime.entitlements"
-  PACKET_TUNNEL_ENTITLEMENTS="$ROOT/scripts/packet-tunnel.entitlements"
   echo "→ ad-hoc codesigning (hardened runtime)"
   codesign --force --sign - \
     --options runtime \
@@ -248,16 +245,15 @@ PLIST
       --timestamp=none \
       "$bin"
   done
-  codesign --force --sign - \
-    --options runtime \
-    --entitlements "$PACKET_TUNNEL_ENTITLEMENTS" \
-    --timestamp=none \
-    "$APPEX/Contents/MacOS/PacketTunnel"
-  codesign --force --sign - \
-    --options runtime \
-    --entitlements "$PACKET_TUNNEL_ENTITLEMENTS" \
-    --timestamp=none \
-    "$APPEX"
+  for arch in arm64 x86_64; do
+    bin="$APP/Contents/Resources/tun2socks-$arch"
+    [[ -e "$bin" ]] || continue
+    codesign --force --sign - \
+      --options runtime \
+      --entitlements "$RUNTIME_ENTITLEMENTS" \
+      --timestamp=none \
+      "$bin"
+  done
   codesign --force --sign - \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \
@@ -287,30 +283,24 @@ X86_REL="$(dirname "$X86_BIN")"
 
 case "$BUILD_VARIANT" in
   arm64)
-    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL" "$ARM_TUNNEL_BIN"
+    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL"
     ;;
   x86_64)
-    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL" "$X86_TUNNEL_BIN"
+    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL"
     ;;
   universal)
     UNI_SWIFT="$THIN_DIR/cloak-swift-universal"
     lipo -create "$ARM_BIN" "$X86_BIN" -output "$UNI_SWIFT"
     chmod +x "$UNI_SWIFT"
-    UNI_TUNNEL="$THIN_DIR/packet-tunnel-universal"
-    lipo -create "$ARM_TUNNEL_BIN" "$X86_TUNNEL_BIN" -output "$UNI_TUNNEL"
-    chmod +x "$UNI_TUNNEL"
-    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL" "$UNI_TUNNEL"
+    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL"
     ;;
   all)
-    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL" "$ARM_TUNNEL_BIN"
-    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL" "$X86_TUNNEL_BIN"
+    assemble_one "${APP_NAME}-arm64" "$ARM_BIN" "$XRAY_ARM" "${BUNDLE_ID}.arm64" "$ARM_REL"
+    assemble_one "${APP_NAME}-x86_64" "$X86_BIN" "$XRAY_X86" "${BUNDLE_ID}.x86_64" "$X86_REL"
     UNI_SWIFT="$THIN_DIR/cloak-swift-universal"
     lipo -create "$ARM_BIN" "$X86_BIN" -output "$UNI_SWIFT"
     chmod +x "$UNI_SWIFT"
-    UNI_TUNNEL="$THIN_DIR/packet-tunnel-universal"
-    lipo -create "$ARM_TUNNEL_BIN" "$X86_TUNNEL_BIN" -output "$UNI_TUNNEL"
-    chmod +x "$UNI_TUNNEL"
-    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL" "$UNI_TUNNEL"
+    assemble_one "$APP_NAME" "$UNI_SWIFT" "$VENDOR_XRAY/xray" "$BUNDLE_ID" "$ARM_REL"
     echo
     echo "✔ Done (BUILD_VARIANT=all):"
     echo "   $DIST/${APP_NAME}-arm64.app"

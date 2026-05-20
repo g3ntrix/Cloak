@@ -16,8 +16,12 @@ struct SettingsView: View {
                 header
 
                 appearanceCard
-                cloudflareCard
-                proxyCard
+                HStack(alignment: .top, spacing: 14) {
+                    cloudflareCard
+                        .frame(maxWidth: .infinity, alignment: .top)
+                    proxyCard
+                        .frame(maxWidth: .infinity, alignment: .top)
+                }
                 permissionsCard
 
                 if showAdvanced {
@@ -119,7 +123,7 @@ struct SettingsView: View {
                 TextEditor(text: $listenerDraft)
                     .font(.system(size: 11.5, design: .monospaced))
                     .scrollContentBackground(.hidden)
-                    .frame(minHeight: 150, maxHeight: 240)
+                    .frame(minHeight: 110, maxHeight: 160)
                     .padding(8)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
@@ -153,7 +157,7 @@ struct SettingsView: View {
                             Task { await app.reconnectIfRunning() }
                         }
                     ))
-                    HStack(alignment: .center, spacing: 10) {
+                    HStack(alignment: .center, spacing: 8) {
                         Text("SOCKS")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
@@ -162,7 +166,7 @@ struct SettingsView: View {
                             .font(.system(size: 12, design: .monospaced))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .frame(width: 72)
+                            .frame(width: 64)
                             .background(
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                                     .fill(AppTheme.controlFill(for: colorScheme))
@@ -176,15 +180,12 @@ struct SettingsView: View {
                             .font(.system(size: 12, design: .monospaced))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .frame(width: 72)
+                            .frame(width: 64)
                             .background(
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                                     .fill(AppTheme.controlFill(for: colorScheme))
                                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.stroke(for: colorScheme)))
                             )
-                        Text(verbatim: "\(app.settings.exposesToLAN ? "0.0.0.0" : "127.0.0.1"):\(app.settings.listenPort) / \(app.settings.httpPort)")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 0)

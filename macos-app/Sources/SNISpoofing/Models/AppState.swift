@@ -320,8 +320,16 @@ final class AppState: ObservableObject {
             try await Task.sleep(nanoseconds: 400_000_000)
 
             if settings.connectionMode == .tunnel {
-                let tunnelConfig = makeTunnelConfiguration()
-                _ = try await packetTunnel.start(configuration: tunnelConfig)
+                // Clear any system proxy left over from a previous proxy-mode session
+                // so browsers don't bypass the TUN device and use the old HTTP proxy.
+                SystemProxy.disableSync()
+                let params = PacketTunnelManager.StartParameters(
+                    connectIP: listenerProject.CONNECT_IP,
+                    socksHost: "127.0.0.1",
+                    socksPort: settings.listenPort,
+                    logLevel: settings.logLevel == .debug || settings.logLevel == .trace ? "debug" : "info"
+                )
+                try packetTunnel.start(parameters: params)
                 tunnelActive = true
             } else if settings.useSystemProxy {
                 let host = settings.resolvedSocksHostForLocalClient
@@ -356,7 +364,7 @@ final class AppState: ObservableObject {
                 systemProxyActive = false
             }
             if tunnelActive {
-                await packetTunnel.stop()
+                packetTunnel.stop()
                 tunnelActive = false
             }
             await stopInternal()
@@ -382,7 +390,7 @@ final class AppState: ObservableObject {
 
     private func stopInternal() async {
         if tunnelActive {
-            await packetTunnel.stop()
+            packetTunnel.stop()
             tunnelActive = false
         }
         if systemProxyActive {
@@ -391,27 +399,6 @@ final class AppState: ObservableObject {
         }
         await xray.stop()
         python.stop()
-    }
-
-    private func makeTunnelConfiguration() -> TunnelConfiguration {
-        let excluded = [listenerProject.CONNECT_IP]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return TunnelConfiguration(
-            listenHost: listenerProject.resolvedDialHost,
-            listenPort: listenerProject.LISTEN_PORT,
-            connectIP: listenerProject.CONNECT_IP,
-            connectPort: listenerProject.CONNECT_PORT,
-            upstreamIP: listenerProject.resolvedDialHost,
-            upstreamPort: listenerProject.LISTEN_PORT,
-            fakeSNI: listenerProject.FAKE_SNI,
-            logLevel: settings.logLevel == .debug || settings.logLevel == .trace ? .debug : .info,
-            connectionMode: .tunnel,
-            httpProxyPort: settings.httpPort,
-            socksProxyPort: settings.listenPort,
-            dnsServers: ["1.1.1.1", "8.8.8.8"],
-            excludedIPv4Addresses: excluded
-        )
     }
 
     // MARK: - Bandwidth sampler

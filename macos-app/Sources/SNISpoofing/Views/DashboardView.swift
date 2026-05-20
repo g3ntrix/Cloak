@@ -441,19 +441,20 @@ struct SystemProxyCard: View {
                         Text("Routing")
                             .font(.system(size: 12, weight: .semibold))
                         Spacer()
-                        if app.settings.connectionMode == .proxy {
-                            Toggle("", isOn: Binding(
-                                get: { app.settings.useSystemProxy },
-                                set: {
-                                    app.settings.useSystemProxy = $0
-                                    app.saveSettings()
-                                    Task { await app.reconnectIfRunning() }
-                                }
-                            ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                        }
+                        Toggle("", isOn: Binding(
+                            get: { app.settings.useSystemProxy },
+                            set: {
+                                app.settings.useSystemProxy = $0
+                                app.saveSettings()
+                                Task { await app.reconnectIfRunning() }
+                            }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .opacity(app.settings.connectionMode == .proxy ? 1 : 0)
+                        .allowsHitTesting(app.settings.connectionMode == .proxy)
                     }
+                    .frame(height: 22)
                     Picker("", selection: Binding(
                         get: { app.settings.connectionMode },
                         set: {
@@ -480,7 +481,6 @@ struct SystemProxyCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(minHeight: 82, alignment: .top)
         }
     }
 }

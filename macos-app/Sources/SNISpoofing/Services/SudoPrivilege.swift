@@ -1,19 +1,21 @@
 import Foundation
 import AppKit
 
-/// One-time admin escalation that installs two NOPASSWD sudoers helpers so the
-/// app can run the Python listener and toggle the system SOCKS proxy without a
-/// password prompt on every action.
+/// One-time admin escalation that installs NOPASSWD sudoers helpers so the
+/// app can run the Python listener, toggle the system SOCKS proxy, and bring
+/// up a utun-based packet tunnel without a password prompt on every action.
 ///
 /// Helpers (all root-owned, scoped to specific scripts in the sudoers rule):
 ///   - `/usr/local/bin/cloak-listener` — runs the bundled PyInstaller SNI listener.
 ///   - `/usr/local/bin/cloak-proxy`    — enables/disables the macOS system SOCKS proxy.
+///   - `/usr/local/bin/cloak-tun`      — spawns bundled tun2socks + manages utun routes.
 enum SudoPrivilege {
     static let sudoersPath = "/etc/sudoers.d/cloak"
     static let wrapperPath = "/usr/local/bin/cloak-listener"
     static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
+    static let tunHelperPath = "/usr/local/bin/cloak-tun"
     /// Bumped whenever any embedded script changes — forces re-install.
-    static let wrapperVersion = "9"
+    static let wrapperVersion = "10"
 
     enum SudoError: LocalizedError {
         case promptCancelled
@@ -59,9 +61,26 @@ enum SudoPrivilege {
         return p.terminationStatus
     }
 
-    /// True when both helpers are installed and NOPASSWD sudo works against them.
+    /// Run the tun helper passwordless. Returns (exit status, captured stdout).
+    /// Used by `PacketTunnelManager` to start/stop the utun + tun2socks bridge.
+    @discardableResult
+    static func runTunHelper(_ args: [String]) -> (Int32, String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        p.arguments = ["-n", tunHelperPath] + args
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = out
+        do { try p.run() } catch { return (-1, "") }
+        p.waitUntilExit()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return (p.terminationStatus, text)
+    }
+
+    /// True when all helpers are installed and NOPASSWD sudo works against them.
     static func isInstalled() -> Bool {
-        listenerHelperReady() && proxyHelperReady()
+        listenerHelperReady() && proxyHelperReady() && tunHelperReady()
     }
 
     static func listenerHelperReady() -> Bool {
@@ -78,6 +97,14 @@ enum SudoPrivilege {
               fm.fileExists(atPath: sudoersPath)
         else { return false }
         return selfCheck(proxyHelperPath, expectVersion: wrapperVersion)
+    }
+
+    static func tunHelperReady() -> Bool {
+        let fm = FileManager.default
+        guard fm.isExecutableFile(atPath: tunHelperPath),
+              fm.fileExists(atPath: sudoersPath)
+        else { return false }
+        return selfCheck(tunHelperPath, expectVersion: wrapperVersion)
     }
 
     private static func selfCheck(_ helper: String, expectVersion: String) -> Bool {
@@ -175,12 +202,143 @@ enum SudoPrivilege {
         esac
         """
 
+        let tunScript = """
+        #!/bin/bash
+        # cloak-tun: starts/stops a utun-based packet tunnel by spawning the
+        # bundled tun2socks binary (received via --bin <path>) and rewriting the
+        # default route through the new utun device. Sudoers grants NOPASSWD
+        # only for THIS path, so the surface is limited to start/stop ops.
+        set -uo pipefail
+        STATE_DIR="/var/run/cloak-tun"
+        PID_FILE="$STATE_DIR/tun2socks.pid"
+        STATE_FILE="$STATE_DIR/state"
+        LOG_FILE="$STATE_DIR/tun2socks.log"
+        TUN_NAME="utun8"
+        TUN_IP="198.18.0.1"
+        TUN_NETMASK="255.255.255.0"
+
+        if [ "${1:-}" = "--self-check" ]; then echo "\(wrapperVersion)"; exit 0; fi
+
+        case "${1:-}" in
+          start)
+            shift
+            CONNECT_IP=""; SOCKS_HOST="127.0.0.1"; SOCKS_PORT=""; TUN2SOCKS_BIN=""; LOGLEVEL="info"
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                --connect-ip) CONNECT_IP="${2:-}"; shift 2 ;;
+                --socks-host) SOCKS_HOST="${2:-}"; shift 2 ;;
+                --socks-port) SOCKS_PORT="${2:-}"; shift 2 ;;
+                --bin) TUN2SOCKS_BIN="${2:-}"; shift 2 ;;
+                --loglevel) LOGLEVEL="${2:-info}"; shift 2 ;;
+                *) echo "unknown arg: $1" >&2; exit 2 ;;
+              esac
+            done
+            if [ -z "$SOCKS_PORT" ] || [ -z "$TUN2SOCKS_BIN" ]; then
+              echo "usage: $0 start --connect-ip <ip> --socks-host <host> --socks-port <port> --bin <tun2socks-path> [--loglevel <lvl>]" >&2
+              exit 1
+            fi
+            if [ ! -x "$TUN2SOCKS_BIN" ]; then
+              echo "tun2socks not found / not executable: $TUN2SOCKS_BIN" >&2
+              exit 1
+            fi
+            mkdir -p "$STATE_DIR"
+            # Tear down anything left over from a prior run before bringing this up.
+            if [ -f "$PID_FILE" ]; then
+              OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+              if [ -n "$OLD_PID" ]; then
+                kill "$OLD_PID" 2>/dev/null || true
+              fi
+              rm -f "$PID_FILE"
+            fi
+            DEFAULT_GW="$(/usr/sbin/netstat -rn -f inet | /usr/bin/awk '/^default/ {print $2; exit}')"
+            DEFAULT_IF="$(/usr/sbin/netstat -rn -f inet | /usr/bin/awk '/^default/ {print $4; exit}')"
+            if [ -z "$DEFAULT_GW" ] || [ -z "$DEFAULT_IF" ]; then
+              echo "could not detect current default gateway" >&2
+              exit 1
+            fi
+            /usr/bin/printf 'gw=%s\\nif=%s\\nconnect_ip=%s\\ntun=%s\\n' \\
+              "$DEFAULT_GW" "$DEFAULT_IF" "$CONNECT_IP" "$TUN_NAME" > "$STATE_FILE"
+            if [ -n "$CONNECT_IP" ]; then
+              /sbin/route -nq add -host "$CONNECT_IP" "$DEFAULT_GW" >/dev/null 2>&1 \\
+                || /sbin/route -nq change -host "$CONNECT_IP" "$DEFAULT_GW" >/dev/null 2>&1 || true
+            fi
+            : > "$LOG_FILE"
+            nohup "$TUN2SOCKS_BIN" \\
+              -device "$TUN_NAME" \\
+              -proxy "socks5://$SOCKS_HOST:$SOCKS_PORT" \\
+              -loglevel "$LOGLEVEL" \\
+              >> "$LOG_FILE" 2>&1 &
+            T2S_PID=$!
+            echo "$T2S_PID" > "$PID_FILE"
+            # Wait up to ~3s for the utun device to appear.
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if /sbin/ifconfig "$TUN_NAME" >/dev/null 2>&1; then break; fi
+              if ! kill -0 "$T2S_PID" 2>/dev/null; then
+                echo "tun2socks exited early. Tail of $LOG_FILE:" >&2
+                /usr/bin/tail -n 40 "$LOG_FILE" >&2 || true
+                exit 1
+              fi
+              sleep 0.25
+            done
+            if ! /sbin/ifconfig "$TUN_NAME" >/dev/null 2>&1; then
+              echo "$TUN_NAME never came up; killing tun2socks" >&2
+              kill "$T2S_PID" 2>/dev/null || true
+              rm -f "$PID_FILE"
+              exit 1
+            fi
+            /sbin/ifconfig "$TUN_NAME" inet "$TUN_IP" "$TUN_IP" netmask "$TUN_NETMASK" up
+            /sbin/route -nq delete default >/dev/null 2>&1 || true
+            /sbin/route -nq add default -interface "$TUN_NAME"
+            echo "$TUN_NAME"
+            ;;
+          stop)
+            if [ -f "$PID_FILE" ]; then
+              PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+              if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+                kill "$PID" 2>/dev/null || true
+                for _ in 1 2 3 4 5 6 7 8; do
+                  kill -0 "$PID" 2>/dev/null || break
+                  sleep 0.25
+                done
+                kill -9 "$PID" 2>/dev/null || true
+              fi
+              rm -f "$PID_FILE"
+            fi
+            if [ -f "$STATE_FILE" ]; then
+              # shellcheck disable=SC1090
+              . "$STATE_FILE"
+              /sbin/route -nq delete default >/dev/null 2>&1 || true
+              if [ -n "${gw:-}" ]; then
+                /sbin/route -nq add default "$gw" >/dev/null 2>&1 || true
+              fi
+              if [ -n "${connect_ip:-}" ]; then
+                /sbin/route -nq delete -host "$connect_ip" >/dev/null 2>&1 || true
+              fi
+              rm -f "$STATE_FILE"
+            fi
+            ;;
+          status)
+            if [ -f "$PID_FILE" ]; then
+              PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+              if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then echo "running"; exit 0; fi
+            fi
+            echo "stopped"
+            ;;
+          *)
+            echo "usage: $0 {start|stop|status}" >&2
+            exit 1
+            ;;
+        esac
+        """
+
         let listenerB64 = Data(listenerScript.utf8).base64EncodedString()
         let proxyB64 = Data(proxyScript.utf8).base64EncodedString()
+        let tunB64 = Data(tunScript.utf8).base64EncodedString()
 
         let sudoersContent = """
         \(user) ALL=(ALL) NOPASSWD: \(wrapperPath)
         \(user) ALL=(ALL) NOPASSWD: \(proxyHelperPath)
+        \(user) ALL=(ALL) NOPASSWD: \(tunHelperPath)
         """
         let sudoersB64 = Data(sudoersContent.utf8).base64EncodedString()
 
@@ -193,6 +351,9 @@ enum SudoPrivilege {
         echo '\(proxyB64)' | /usr/bin/base64 -D > '\(proxyHelperPath)'
         chown root:wheel '\(proxyHelperPath)'
         chmod 755 '\(proxyHelperPath)'
+        echo '\(tunB64)' | /usr/bin/base64 -D > '\(tunHelperPath)'
+        chown root:wheel '\(tunHelperPath)'
+        chmod 755 '\(tunHelperPath)'
         echo '\(sudoersB64)' | /usr/bin/base64 -D > '\(sudoersPath)'
         chown root:wheel '\(sudoersPath)'
         chmod 440 '\(sudoersPath)'
@@ -227,7 +388,9 @@ enum SudoPrivilege {
         rm -f '\(sudoersPath)'
         rm -f '\(wrapperPath)'
         rm -f '\(proxyHelperPath)'
+        rm -f '\(tunHelperPath)'
         rm -f /usr/local/bin/cloak-xray /usr/local/bin/cloak-tun-routes
+        rm -rf /var/run/cloak-tun
         """
         let source = """
         do shell script "\(escapeForAppleScript(shell))" with administrator privileges with prompt "Remove Cloak's passwordless helpers?"
