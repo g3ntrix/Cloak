@@ -15,7 +15,7 @@ enum SudoPrivilege {
     static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
     static let tunHelperPath = "/usr/local/bin/cloak-tun"
     /// Bumped whenever any embedded script changes — forces re-install.
-    static let wrapperVersion = "12"
+    static let wrapperVersion = "13"
 
     enum SudoError: LocalizedError {
         case promptCancelled
@@ -208,7 +208,7 @@ enum SudoPrivilege {
         # bundled tun2socks binary (received via --bin <path>) and rewriting the
         # default route through the new utun device. Sudoers grants NOPASSWD
         # only for THIS path, so the surface is limited to start/stop ops.
-        set -uo pipefail
+        set -euo pipefail
         STATE_DIR="/var/run/cloak-tun"
         PID_FILE="$STATE_DIR/tun2socks.pid"
         STATE_FILE="$STATE_DIR/state"
@@ -260,7 +260,7 @@ enum SudoPrivilege {
               /sbin/route -nq add -host "$CONNECT_IP" "$DEFAULT_GW" >/dev/null 2>&1 \\
                 || /sbin/route -nq change -host "$CONNECT_IP" "$DEFAULT_GW" >/dev/null 2>&1 || true
             fi
-            utun_before="$(/sbin/ifconfig -l | /usr/bin/tr ' ' '\\n' | /usr/bin/grep '^utun')"
+            utun_before="$(/sbin/ifconfig -l | /usr/bin/tr ' ' '\\n' | /usr/bin/grep '^utun' || true)"
             : > "$LOG_FILE"
             nohup "$TUN2SOCKS_BIN" \\
               -device "utun" \\
@@ -272,7 +272,7 @@ enum SudoPrivilege {
             # Wait up to ~3s for the dynamic utun device to appear.
             TUN_NAME=""
             for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-              utun_after="$(/sbin/ifconfig -l | /usr/bin/tr ' ' '\\n' | /usr/bin/grep '^utun')"
+              utun_after="$(/sbin/ifconfig -l | /usr/bin/tr ' ' '\\n' | /usr/bin/grep '^utun' || true)"
               for dev in $utun_after; do
                 if ! echo "$utun_before" | /usr/bin/grep -q "^$dev$"; then
                   TUN_NAME="$dev"
@@ -296,8 +296,20 @@ enum SudoPrivilege {
             /usr/bin/printf 'gw=%s\\nif=%s\\nconnect_ip=%s\\ntun=%s\\n' \\
               "$DEFAULT_GW" "$DEFAULT_IF" "$CONNECT_IP" "$TUN_NAME" > "$STATE_FILE"
             /sbin/ifconfig "$TUN_NAME" inet "$TUN_IP" "$TUN_IP" netmask "$TUN_NETMASK" up
-            /sbin/route -nq delete default >/dev/null 2>&1 || true
-            /sbin/route -nq add default -interface "$TUN_NAME"
+            # Split default routes are more reliable on macOS than replacing the
+            # gateway default route: they are more specific than 0/0, and the
+            # CONNECT_IP host route above still lets Xray reach the edge directly.
+            /sbin/route -nq add -net 0.0.0.0 -netmask 128.0.0.0 -interface "$TUN_NAME" \\
+              || /sbin/route -nq change -net 0.0.0.0 -netmask 128.0.0.0 -interface "$TUN_NAME"
+            /sbin/route -nq add -net 128.0.0.0 -netmask 128.0.0.0 -interface "$TUN_NAME" \\
+              || /sbin/route -nq change -net 128.0.0.0 -netmask 128.0.0.0 -interface "$TUN_NAME"
+            ROUTE_IF="$(/sbin/route -n get 8.8.8.8 2>/dev/null | /usr/bin/awk '/interface:/ {print $2; exit}')"
+            if [ "$ROUTE_IF" != "$TUN_NAME" ]; then
+              echo "tunnel route did not take over: 8.8.8.8 is routed via ${ROUTE_IF:-unknown}, expected $TUN_NAME. Disable other VPN/tunnel routes and try again." >&2
+              kill "$T2S_PID" 2>/dev/null || true
+              rm -f "$PID_FILE" "$STATE_FILE"
+              exit 1
+            fi
             /usr/sbin/networksetup -listallnetworkservices \\
               | /usr/bin/grep -v '^[*]' | /usr/bin/tail -n +2 \\
               | while IFS= read -r svc; do
@@ -322,10 +334,8 @@ enum SudoPrivilege {
             if [ -f "$STATE_FILE" ]; then
               # shellcheck disable=SC1090
               . "$STATE_FILE"
-              /sbin/route -nq delete default >/dev/null 2>&1 || true
-              if [ -n "${gw:-}" ]; then
-                /sbin/route -nq add default "$gw" >/dev/null 2>&1 || true
-              fi
+              /sbin/route -nq delete -net 0.0.0.0 -netmask 128.0.0.0 >/dev/null 2>&1 || true
+              /sbin/route -nq delete -net 128.0.0.0 -netmask 128.0.0.0 >/dev/null 2>&1 || true
               if [ -n "${connect_ip:-}" ]; then
                 /sbin/route -nq delete -host "$connect_ip" >/dev/null 2>&1 || true
               fi
