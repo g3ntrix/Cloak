@@ -9,6 +9,7 @@ enum RealPingService {
     }
 
     /// HTTP probe through SOCKS — measures end-to-end time for traffic routed by Xray.
+    /// A ping only succeeds when the probe returns the expected 204 response.
     private static let socksProbeURL = "http://connectivitycheck.gstatic.com/generate_204"
 
     static func pingViaSocks(
@@ -39,7 +40,7 @@ enum RealPingService {
             "--connect-timeout", timeoutStr,
             "--max-time", timeoutStr,
             "--socks5-hostname", socks,
-            "-w", "%{time_total}",
+            "-w", "%{http_code} %{time_total}",
             url,
         ]
         let out = Pipe()
@@ -55,23 +56,30 @@ enum RealPingService {
         let stdout = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let stderr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
 
-        if let seconds = Double(stdout.trimmingCharacters(in: .whitespacesAndNewlines)), seconds > 0 {
+        let fields = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" })
+        if p.terminationStatus == 0,
+           fields.count == 2,
+           fields[0] == "204",
+           let seconds = Double(fields[1]),
+           seconds > 0 {
             let ms = Int((seconds * 1000).rounded())
-            if p.terminationStatus == 0 || ms >= 5 {
-                return Result(millis: max(ms, 1), error: nil)
-            }
+            return Result(millis: max(ms, 1), error: nil)
         }
 
-        return Result(millis: nil, error: shortCurlError(stderr, exitCode: p.terminationStatus))
+        let httpCode = fields.first.map(String.init)
+        return Result(millis: nil, error: shortCurlError(stderr, exitCode: p.terminationStatus, httpCode: httpCode))
     }
 
-    private static func shortCurlError(_ stderr: String, exitCode: Int32) -> String {
+    private static func shortCurlError(_ stderr: String, exitCode: Int32, httpCode: String? = nil) -> String {
         let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         if msg.localizedCaseInsensitiveContains("timeout") || msg.contains("28") { return "timeout" }
         if msg.localizedCaseInsensitiveContains("refused") || msg.contains("7") { return "refused" }
         if msg.localizedCaseInsensitiveContains("socks") { return "proxy" }
         if exitCode == 7 { return "refused" }
         if exitCode == 28 { return "timeout" }
+        if let httpCode, httpCode != "000", httpCode != "204" { return "http \(httpCode)" }
+        if httpCode == "000" { return "no response" }
         return msg.isEmpty ? "failed" : "failed"
     }
 

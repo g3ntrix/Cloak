@@ -70,6 +70,7 @@ final class AppState: ObservableObject {
     private var sessionBaselineTx: UInt64 = 0
     private var pingBatchToken: UUID?
     private var pingBatchTask: Task<Void, Never>?
+    private static let maxConcurrentPingWorkers = 4
 
     init() {
         self.settings = store.loadSettings() ?? .default
@@ -476,9 +477,8 @@ final class AppState: ObservableObject {
         profilePingingIDs.removeAll()
     }
 
-    /// Tests every profile. Uses one shared listener between probes (faster than
-    /// restarting from scratch each time). Xray still runs one profile at a time
-    /// because the app has a single local SOCKS port.
+    /// Tests every profile. Uses one shared listener and multiple temporary Xray
+    /// workers on separate local ports so disconnected batch probes can run in parallel.
     func startPingAllProfiles() {
         cancelPingBatch()
         let token = UUID()
@@ -531,13 +531,7 @@ final class AppState: ObservableObject {
                 return
             }
 
-            for p in list {
-                guard pingBatchToken == token, !Task.isCancelled else { break }
-                let r = await pingProfileViaBatch(p)
-                profilePingResults[p.id] = r
-                profilePingingIDs.remove(p.id)
-                persistPingResults()
-            }
+            await pingProfilesViaBatch(list, token: token)
         }
     }
 
@@ -562,27 +556,119 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Ping while listener is already up (batch path): only cycle Xray per profile.
-    private func pingProfileViaBatch(_ profile: Profile) async -> RealPingService.Result {
-        let socksHost = settings.resolvedSocksHostForLocalClient
-        let socksPort = settings.listenPort
+    /// Ping while listener is already up (batch path): run temporary Xray workers in parallel.
+    private func pingProfilesViaBatch(_ list: [Profile], token: UUID) async {
+        let portPairs = temporaryPingPorts(count: list.count)
+        let jobs = list.enumerated().map { offset, profile in
+            (
+                profile: profile,
+                ports: offset < portPairs.count ? portPairs[offset] : nil
+            )
+        }
+        let workerCount = max(1, min(Self.maxConcurrentPingWorkers, jobs.count))
+        var nextJobIndex = 0
+        let baseSettings = settings
+        let bridge = listenerProject
+
+        await withTaskGroup(of: (UUID, RealPingService.Result).self) { group in
+            func addNextJob() {
+                guard nextJobIndex < jobs.count else { return }
+                let job = jobs[nextJobIndex]
+                nextJobIndex += 1
+
+                group.addTask {
+                    guard let ports = job.ports else {
+                        return (job.profile.id, RealPingService.Result(millis: nil, error: "no port"))
+                    }
+                    let result = await Self.pingProfileViaTemporaryXray(
+                        profile: job.profile,
+                        baseSettings: baseSettings,
+                        bridge: bridge,
+                        socksPort: ports.socks,
+                        httpPort: ports.http
+                    )
+                    return (job.profile.id, result)
+                }
+            }
+
+            for _ in 0 ..< workerCount {
+                addNextJob()
+            }
+
+            while let (id, result) = await group.next() {
+                guard pingBatchToken == token, !Task.isCancelled else {
+                    group.cancelAll()
+                    break
+                }
+                profilePingResults[id] = result
+                profilePingingIDs.remove(id)
+                persistPingResults()
+                addNextJob()
+            }
+        }
+    }
+
+    private func temporaryPingPorts(count: Int) -> [(socks: Int, http: Int)] {
+        guard count > 0 else { return [] }
+        var out: [(socks: Int, http: Int)] = []
+        var used = Set([settings.listenPort, settings.httpPort, listenerProject.LISTEN_PORT])
+        var port = 32_000
+
+        while out.count < count, port < 65_534 {
+            let socks = port
+            let http = port + 1
+            if !used.contains(socks),
+               !used.contains(http),
+               PortAvailability.isAvailable(port: socks, host: "127.0.0.1"),
+               PortAvailability.isAvailable(port: http, host: "127.0.0.1") {
+                out.append((socks, http))
+                used.insert(socks)
+                used.insert(http)
+            }
+            port += 2
+        }
+
+        return out
+    }
+
+    nonisolated private static func pingProfileViaTemporaryXray(
+        profile: Profile,
+        baseSettings: AppSettings,
+        bridge: ListenerProjectConfig,
+        socksPort: Int,
+        httpPort: Int
+    ) async -> RealPingService.Result {
+        let xray = XrayCoreManager()
+        let cfgURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cloak-xray-ping-\(profile.id.uuidString)-\(UUID().uuidString).json")
+        defer {
+            xray.stopSync()
+            try? FileManager.default.removeItem(at: cfgURL)
+        }
 
         do {
-            try await awaitListenerReady()
+            var probeSettings = baseSettings
+            probeSettings.listenHost = "127.0.0.1"
+            probeSettings.listenPort = socksPort
+            probeSettings.httpPort = httpPort
+            probeSettings.useSystemProxy = false
+            probeSettings.connectionMode = .proxy
+
             let xdata = try XrayOutboundBuilder.generate(
-                settings: settings,
+                settings: probeSettings,
                 profile: profile,
-                bridge: listenerProject
+                bridge: bridge
             )
-            let cfgURL = try store.writeGeneratedXrayConfig(xdata)
+            try xdata.write(to: cfgURL, options: .atomic)
             try xray.start(configURL: cfgURL)
             try await Task.sleep(nanoseconds: 1_000_000_000)
-            let result = await RealPingService.pingViaSocks(proxyHost: socksHost, proxyPort: socksPort)
-            xray.stopSync()
-            return result
+            return await RealPingService.pingViaSocks(proxyHost: "127.0.0.1", proxyPort: socksPort)
         } catch {
-            xray.stopSync()
-            return RealPingService.Result(millis: nil, error: shortPingError(error))
+            let msg = error.localizedDescription
+            return RealPingService.Result(
+                millis: nil,
+                error: msg.isEmpty ? "failed" : String(msg.prefix(48))
+            )
         }
     }
 

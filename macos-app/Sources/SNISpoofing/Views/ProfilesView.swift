@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 /// Profiles tab: a single-column list focused on picking and triaging profiles.
 /// No editor — users import URIs and pick one. Technical details (TLS, transport)
@@ -13,12 +14,12 @@ struct ProfilesView: View {
     @State private var renaming: UUID?
     @State private var renameDraft: String = ""
 
-    @State private var sortByPing = false
+    @AppStorage("profiles.sortByPing") private var sortByPing = false
     @State private var checkedIDs: Set<UUID> = []
     @State private var selectionMode = false
 
     @State private var dropActive = false
-    @State private var dropError: String?
+    @State private var notice: ProfileNotice?
     @State private var showBulkDelete = false
     @State private var showRemoveUnpingedConfirm = false
 
@@ -48,17 +49,9 @@ struct ProfilesView: View {
             handleDrop(providers: providers)
             return true
         }
-        .overlay(alignment: .topTrailing) {
-            if let msg = dropError {
-                Text(msg)
-                    .font(.system(size: 11))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.red.opacity(0.85)))
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .transition(.opacity)
-            }
+        .overlay(alignment: .bottom) {
+            noticeView
+                .padding(.bottom, 12)
         }
         .sheet(isPresented: $showImport) {
             ImportSheet { raw in
@@ -95,6 +88,29 @@ struct ProfilesView: View {
     }
 
     // MARK: - Sub-views
+
+    @ViewBuilder
+    private var noticeView: some View {
+        if let notice {
+            HStack(spacing: 8) {
+                Image(systemName: notice.kind.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(notice.message)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(notice.kind.fill(for: colorScheme))
+                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.28 : 0.12), radius: 12, y: 4)
+            )
+            .overlay(Capsule().stroke(notice.kind.stroke, lineWidth: 1))
+            .foregroundStyle(notice.kind.foreground)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -202,6 +218,11 @@ struct ProfilesView: View {
                         .buttonStyle(.borderless)
                         .controlSize(.small)
                     if !checkedIDs.isEmpty {
+                        Button("Export (\(checkedIDs.count))") {
+                            exportProfiles(selectedProfiles)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                         Button("Delete (\(checkedIDs.count))", role: .destructive) {
                             showBulkDelete = true
                         }
@@ -274,12 +295,9 @@ struct ProfilesView: View {
                             }
                             Button("Ping") { Task { @MainActor in await app.pingSingleProfile(p) } }
                             Divider()
-                            Button("Copy SNI") {
-                                let pb = NSPasteboard.general
-                                pb.clearContents()
-                                pb.setString(p.tls.serverName, forType: .string)
+                            Button("Export Config") {
+                                exportProfiles([p])
                             }
-                            .disabled(p.tls.serverName.isEmpty)
                             Divider()
                             Button("Delete", role: .destructive) { pendingDelete = p.id }
                         }
@@ -334,22 +352,30 @@ struct ProfilesView: View {
     private func ingest(rawText: String) {
         let summary = app.importMany(from: rawText)
         if summary.totalParsed == 0 {
-            flashDropError("No profile links in dropped file.")
+            showNotice("No profile links in dropped file.", kind: .error)
         } else {
-            flashDropError("Added \(summary.added) profile\(summary.added == 1 ? "" : "s")" +
-                           (summary.duplicates > 0 ? " · \(summary.duplicates) duplicate\(summary.duplicates == 1 ? "" : "s") skipped" : ""))
+            showNotice("Added \(summary.added) profile\(summary.added == 1 ? "" : "s")" +
+                       (summary.duplicates > 0 ? " · \(summary.duplicates) duplicate\(summary.duplicates == 1 ? "" : "s") skipped" : ""),
+                       kind: .success)
         }
     }
 
     @MainActor
-    private func flashDropError(_ msg: String) {
-        withAnimation { dropError = msg }
+    private func showNotice(_ message: String, kind: ProfileNotice.Kind) {
+        let notice = ProfileNotice(message: message, kind: kind)
+        withAnimation { self.notice = notice }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            withAnimation { dropError = nil }
+            if self.notice?.id == notice.id {
+                withAnimation { self.notice = nil }
+            }
         }
     }
 
     // MARK: - Selection
+
+    private var selectedProfiles: [Profile] {
+        app.profiles.filter { checkedIDs.contains($0.id) }
+    }
 
     @MainActor
     private func toggleChecked(_ id: UUID) {
@@ -375,10 +401,93 @@ struct ProfilesView: View {
         checkedIDs.removeAll()
         selectionMode = false
         if removed > 0 {
-            flashDropError("Removed \(removed) profile\(removed == 1 ? "" : "s") with no ping.")
+            showNotice("Removed \(removed) profile\(removed == 1 ? "" : "s") with no ping.", kind: .success)
         }
     }
 
+    @MainActor
+    private func exportProfiles(_ profiles: [Profile]) {
+        guard !profiles.isEmpty else { return }
+
+        let text: String
+        do {
+            text = try ProfileExporter.exportText(profiles)
+        } catch {
+            showNotice(error.localizedDescription, kind: .error)
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = profiles.count == 1
+            ? "\(safeExportFilename(profiles[0].name)).txt"
+            : "cloak-configs.txt"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                DispatchQueue.main.async {
+                    showNotice("Exported \(profiles.count) config\(profiles.count == 1 ? "" : "s").", kind: .success)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    showNotice("Export failed: \(error.localizedDescription)", kind: .error)
+                }
+            }
+        }
+    }
+
+    private func safeExportFilename(_ raw: String) -> String {
+        let invalid = CharacterSet(charactersIn: "/\\?%*|\"<>:")
+        let cleaned = raw
+            .components(separatedBy: invalid)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "cloak-config" : cleaned
+    }
+
+}
+
+private struct ProfileNotice: Identifiable, Equatable {
+    enum Kind {
+        case success
+        case error
+
+        var systemImage: String {
+            switch self {
+            case .success: return "checkmark.circle.fill"
+            case .error: return "exclamationmark.triangle.fill"
+            }
+        }
+
+        var foreground: Color {
+            switch self {
+            case .success: return .green
+            case .error: return .red
+            }
+        }
+
+        var stroke: Color {
+            switch self {
+            case .success: return Color.green.opacity(0.28)
+            case .error: return Color.red.opacity(0.35)
+            }
+        }
+
+        func fill(for scheme: ColorScheme) -> Color {
+            switch self {
+            case .success:
+                return scheme == .dark ? Color.green.opacity(0.18) : Color.green.opacity(0.12)
+            case .error:
+                return scheme == .dark ? Color.red.opacity(0.18) : Color.red.opacity(0.10)
+            }
+        }
+    }
+
+    let id = UUID()
+    let message: String
+    let kind: Kind
 }
 
 // MARK: - Row
