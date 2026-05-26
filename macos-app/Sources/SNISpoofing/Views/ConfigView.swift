@@ -21,10 +21,9 @@ struct SettingsView: View {
                     proxyCard
                 }
                 .fixedSize(horizontal: false, vertical: true)
-                permissionsCard
 
                 if showAdvanced {
-                    advancedCard
+                    advancedSection
                 }
 
                 HStack {
@@ -77,7 +76,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Settings")
                 .font(.system(size: 20, weight: .bold, design: .rounded))
-            Text("Paste your Cloudflare config and grant the helper permission once.")
+            Text("Tune Cloak's appearance, local proxy, and connection config.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }
@@ -248,7 +247,14 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            advancedCard
+            permissionsCard
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
     private var advancedCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
@@ -283,7 +289,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     // MARK: - Compact field helper

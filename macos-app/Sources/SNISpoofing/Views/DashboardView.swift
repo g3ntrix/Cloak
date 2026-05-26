@@ -117,7 +117,7 @@ struct DashboardView: View {
         )
     }
 
-    // MARK: - Compact bandwidth meter (one card, one row)
+    // MARK: - Compact bandwidth meter
 
     private var meterCard: some View {
         Card {
@@ -151,8 +151,11 @@ struct DashboardView: View {
                     Divider().frame(height: 36)
                     totalColumn
                 }
-                Sparkbar(value: app.downloadBytesPerSec, peak: peakHint, tint: .blue)
-                    .frame(height: 4)
+                ActivityPulseMeter(
+                    downValue: app.downloadBytesPerSec,
+                    upValue: app.uploadBytesPerSec,
+                    peak: peakHint
+                )
             }
         }
     }
@@ -402,29 +405,93 @@ struct PowerButton: View {
     }
 }
 
-/// Single-line activity bar that fills proportionally to current vs peak.
-private struct Sparkbar: View {
+/// Two-line activity meter that fills proportionally to current vs peak.
+private struct ActivityPulseMeter: View {
+    let downValue: Double
+    let upValue: Double
+    let peak: Double
+
+    var body: some View {
+        VStack(spacing: 7) {
+            PulseSparkbar(symbol: "arrow.down", value: downValue, peak: peak, tint: .blue)
+            PulseSparkbar(symbol: "arrow.up", value: upValue, peak: peak, tint: .purple)
+        }
+        .padding(.top, 1)
+    }
+}
+
+private struct PulseSparkbar: View {
     @Environment(\.colorScheme) private var colorScheme
+    @State private var pulse = false
+
+    let symbol: String
     let value: Double
     let peak: Double
     let tint: Color
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(AppTheme.subtleFill(for: colorScheme))
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(LinearGradient(colors: [tint.opacity(0.85), tint], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: max(0, min(geo.size.width, geo.size.width * filled)))
-                    .animation(.easeOut(duration: 0.4), value: filled)
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 14)
+            GeometryReader { geo in
+                let fillWidth = max(0, min(geo.size.width, geo.size.width * filled))
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(AppTheme.subtleFill(for: colorScheme))
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [tint.opacity(0.72), tint],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: fillWidth)
+                        .shadow(color: tint.opacity(pulse ? 0.48 : 0.18), radius: pulse ? 8 : 3, y: 0)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .stroke(Color.white.opacity(pulse ? 0.34 : 0), lineWidth: 1)
+                        )
+                    segmentOverlay
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .animation(.spring(response: 0.32, dampingFraction: 0.82), value: filled)
             }
+            .frame(height: 7)
         }
+        .onChange(of: value) { _ in triggerPulse() }
     }
 
     private var filled: CGFloat {
         guard peak > 0 else { return 0 }
         return CGFloat(min(1.0, value / peak))
+    }
+
+    private var segmentOverlay: some View {
+        HStack(spacing: 3) {
+            ForEach(0 ..< 18, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 1, style: .continuous)
+                    .fill(Color.white.opacity(colorScheme == .dark ? 0.16 : 0.24))
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 2)
+        .blendMode(.overlay)
+        .opacity(0.55)
+        .allowsHitTesting(false)
+    }
+
+    private func triggerPulse() {
+        guard value > 0 else {
+            withAnimation(.easeOut(duration: 0.18)) { pulse = false }
+            return
+        }
+        withAnimation(.easeOut(duration: 0.10)) { pulse = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            withAnimation(.easeOut(duration: 0.26)) { pulse = false }
+        }
     }
 }
 
@@ -433,57 +500,71 @@ struct SystemProxyCard: View {
 
     var body: some View {
         Card {
-            HStack(alignment: .top, spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
                 Image(systemName: app.settings.connectionMode.systemImage)
                     .font(.system(size: 17))
                     .foregroundStyle(.cyan)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
+                    HStack(alignment: .center, spacing: 8) {
                         Text("Routing")
                             .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(1)
                         Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { app.settings.useSystemProxy },
-                            set: {
-                                app.settings.useSystemProxy = $0
-                                app.saveSettings()
-                                Task { await app.reconnectIfRunning() }
-                            }
-                        ))
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .opacity(app.settings.connectionMode == .proxy ? 1 : 0)
-                        .allowsHitTesting(app.settings.connectionMode == .proxy)
+                        modePicker
+                            .frame(width: 116)
                     }
-                    .frame(height: 22)
-                    Picker("", selection: Binding(
-                        get: { app.settings.connectionMode },
-                        set: {
-                            app.settings.connectionMode = $0
-                            app.saveSettings()
-                            Task { await app.reconnectIfRunning() }
-                        }
-                    )) {
-                        ForEach(AppSettings.ConnectionMode.allCases) { mode in
-                            Label(mode.label, systemImage: mode.systemImage).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.small)
-                    HStack(spacing: 6) {
+                    HStack(alignment: .center, spacing: 6) {
                         RouteSummaryChip(text: app.settings.connectionMode == .tunnel
                                          ? "Packet tunnel"
                                          : (app.settings.useSystemProxy ? "HTTP/S + SOCKS" : "Manual apps"))
                         if app.settings.connectionMode == .proxy && app.settings.useSystemProxy {
                             RouteSummaryChip(text: "System on")
                         }
+                        Spacer(minLength: 0)
+                        if app.settings.connectionMode == .proxy {
+                            proxyToggle
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
             }
+            .frame(minHeight: 82, alignment: .center)
         }
+    }
+
+    private var modePicker: some View {
+        Picker("", selection: Binding(
+            get: { app.settings.connectionMode },
+            set: {
+                app.settings.connectionMode = $0
+                app.saveSettings()
+                Task { await app.reconnectIfRunning() }
+            }
+        )) {
+            ForEach(AppSettings.ConnectionMode.allCases) { mode in
+                Label(mode.label, systemImage: mode.systemImage).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+    }
+
+    private var proxyToggle: some View {
+        Toggle("", isOn: Binding(
+            get: { app.settings.useSystemProxy },
+            set: {
+                app.settings.useSystemProxy = $0
+                app.saveSettings()
+                Task { await app.reconnectIfRunning() }
+            }
+        ))
+        .toggleStyle(.switch)
+        .labelsHidden()
     }
 }
 

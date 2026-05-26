@@ -288,6 +288,7 @@ struct ProfilesView: View {
                             }
                         )
                         .contextMenu {
+                            let contextProfiles = contextProfiles(for: p)
                             Button("Make Active") { app.setActive(p.id) }
                             Button("Rename") {
                                 renameDraft = p.name
@@ -295,11 +296,17 @@ struct ProfilesView: View {
                             }
                             Button("Ping") { Task { @MainActor in await app.pingSingleProfile(p) } }
                             Divider()
-                            Button("Export Config") {
-                                exportProfiles([p])
+                            Button(exportTitle(for: contextProfiles.count)) {
+                                exportProfiles(contextProfiles)
                             }
                             Divider()
-                            Button("Delete", role: .destructive) { pendingDelete = p.id }
+                            Button(deleteTitle(for: contextProfiles.count), role: .destructive) {
+                                if contextProfiles.count > 1 {
+                                    showBulkDelete = true
+                                } else {
+                                    pendingDelete = p.id
+                                }
+                            }
                         }
                     }
                 }
@@ -375,6 +382,21 @@ struct ProfilesView: View {
 
     private var selectedProfiles: [Profile] {
         app.profiles.filter { checkedIDs.contains($0.id) }
+    }
+
+    private func contextProfiles(for profile: Profile) -> [Profile] {
+        if checkedIDs.count > 1, checkedIDs.contains(profile.id) {
+            return selectedProfiles
+        }
+        return [profile]
+    }
+
+    private func exportTitle(for count: Int) -> String {
+        count > 1 ? "Export Configs (\(count))" : "Export Config"
+    }
+
+    private func deleteTitle(for count: Int) -> String {
+        count > 1 ? "Delete Configs (\(count))" : "Delete"
     }
 
     @MainActor
