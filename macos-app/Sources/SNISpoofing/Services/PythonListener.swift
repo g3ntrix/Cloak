@@ -8,6 +8,8 @@ final class PythonListener {
 
     private var process: Process?
     private var outputPipe: Pipe?
+    private let stateLock = NSLock()
+    private var expectedTerminationPIDs = Set<Int32>()
 
     func isRunning() -> Bool {
         process?.isRunning == true
@@ -50,12 +52,16 @@ final class PythonListener {
         p.standardError = out
 
         p.terminationHandler = { [weak self] proc in
-            if proc.terminationStatus != 0 {
-                self?.emit("[listener exited with status \(proc.terminationStatus)]\n")
+            guard let self else { return }
+            let wasExpected = self.consumeExpectedTermination(pid: proc.processIdentifier)
+            if proc.terminationStatus != 0, !wasExpected {
+                self.emit("[listener exited with status \(proc.terminationStatus)]\n")
             }
             out.fileHandleForReading.readabilityHandler = nil
-            self?.process = nil
-            self?.outputPipe = nil
+            if self.process === proc {
+                self.process = nil
+                self.outputPipe = nil
+            }
         }
 
         try p.run()
@@ -75,11 +81,25 @@ final class PythonListener {
 
     func stop() {
         if let p = process, p.isRunning {
+            markExpectedTermination(pid: p.processIdentifier)
             p.terminate()
         }
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         process = nil
         outputPipe = nil
+    }
+
+    private func markExpectedTermination(pid: Int32) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        expectedTerminationPIDs.insert(pid)
+    }
+
+    private func consumeExpectedTermination(pid: Int32) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        let found = expectedTerminationPIDs.remove(pid) != nil
+        return found
     }
 
     private func emit(_ text: String) {

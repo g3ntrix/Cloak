@@ -1,5 +1,5 @@
 import Foundation
-import Network
+import Darwin
 
 /// Latency probes for profiles and local endpoints.
 enum RealPingService {
@@ -85,68 +85,128 @@ enum RealPingService {
 
     /// Direct TCP connect to host:port (local bridge reachability).
     static func ping(host: String, port: UInt16, timeout: TimeInterval = 10) async -> Result {
-        guard !host.isEmpty, port > 0 else {
+        let targetHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !targetHost.isEmpty, port > 0 else {
             return Result(millis: nil, error: "no server")
         }
-        let nwHost = NWEndpoint.Host(host)
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            return Result(millis: nil, error: "bad port")
+
+        return await Task.detached(priority: .utility) {
+            tcpConnect(host: targetHost, port: port, timeout: timeout)
+        }.value
+    }
+
+    private static func tcpConnect(host: String, port: UInt16, timeout: TimeInterval) -> Result {
+        let start = DispatchTime.now()
+        let timeoutSeconds = max(timeout, 0.001)
+        let deadline = Date().timeIntervalSinceReferenceDate + timeoutSeconds
+        let service = String(port)
+
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+
+        var resolved: UnsafeMutablePointer<addrinfo>?
+        let gai = getaddrinfo(host, service, &hints, &resolved)
+        guard gai == 0, let first = resolved else {
+            return Result(millis: nil, error: "dns")
+        }
+        defer { freeaddrinfo(first) }
+
+        var cursor: UnsafeMutablePointer<addrinfo>? = first
+        var lastError = "failed"
+
+        while let current = cursor {
+            if Task.isCancelled {
+                return Result(millis: nil, error: "cancelled")
+            }
+
+            let remaining = deadline - Date().timeIntervalSinceReferenceDate
+            guard remaining > 0 else {
+                return Result(millis: nil, error: "timeout")
+            }
+
+            let info = current.pointee
+            cursor = info.ai_next
+
+            let fd = socket(info.ai_family, info.ai_socktype, info.ai_protocol)
+            guard fd >= 0 else {
+                lastError = shortPOSIXError(errno)
+                continue
+            }
+
+            let flags = fcntl(fd, F_GETFL, 0)
+            if flags >= 0 {
+                _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+            }
+
+            if connect(fd, info.ai_addr, info.ai_addrlen) == 0 {
+                let ns = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+                close(fd)
+                return Result(millis: max(Int(Double(ns) / 1_000_000), 1), error: nil)
+            }
+
+            let connectErr = errno
+            guard connectErr == EINPROGRESS || connectErr == EALREADY || connectErr == EINTR else {
+                lastError = shortPOSIXError(connectErr)
+                close(fd)
+                continue
+            }
+
+            let wait = waitForConnect(fd: fd, timeout: remaining)
+            close(fd)
+            switch wait {
+            case .success:
+                let ns = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+                return Result(millis: max(Int(Double(ns) / 1_000_000), 1), error: nil)
+            case .failure(let error):
+                lastError = error
+            }
         }
 
-        return await withCheckedContinuation { cont in
-            let conn = NWConnection(host: nwHost, port: nwPort, using: .tcp)
-            let start = DispatchTime.now()
-            let resumed = _Box(false)
-            let q = DispatchQueue(label: "cloak.ping.\(host):\(port)")
+        return Result(millis: nil, error: lastError)
+    }
 
-            let deadline = DispatchWorkItem {
-                guard !resumed.value else { return }
-                resumed.value = true
-                conn.cancel()
-                cont.resume(returning: Result(millis: nil, error: "timeout"))
-            }
-            q.asyncAfter(deadline: .now() + timeout, execute: deadline)
+    private enum ConnectWaitResult {
+        case success
+        case failure(String)
+    }
 
-            conn.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    guard !resumed.value else { return }
-                    resumed.value = true
-                    deadline.cancel()
-                    let ns = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
-                    conn.cancel()
-                    cont.resume(returning: Result(millis: Int(Double(ns) / 1_000_000), error: nil))
-                case .failed(let err):
-                    guard !resumed.value else { return }
-                    resumed.value = true
-                    deadline.cancel()
-                    conn.cancel()
-                    cont.resume(returning: Result(millis: nil, error: shortError(err)))
-                case .cancelled:
-                    guard !resumed.value else { return }
-                    resumed.value = true
-                    deadline.cancel()
-                    cont.resume(returning: Result(millis: nil, error: "cancelled"))
-                default:
-                    break
-                }
+    private static func waitForConnect(fd: Int32, timeout: TimeInterval) -> ConnectWaitResult {
+        var pollDescriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        let timeoutMs = Int32(min(Double(Int32.max), max(1, timeout * 1000)))
+
+        while true {
+            let ready = poll(&pollDescriptor, 1, timeoutMs)
+            if ready == 0 {
+                return .failure("timeout")
             }
-            conn.start(queue: q)
+            if ready < 0 {
+                if errno == EINTR { continue }
+                return .failure(shortPOSIXError(errno))
+            }
+
+            var socketError: Int32 = 0
+            var socketErrorLength = socklen_t(MemoryLayout<Int32>.size)
+            guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &socketErrorLength) == 0 else {
+                return .failure(shortPOSIXError(errno))
+            }
+            return socketError == 0 ? .success : .failure(shortPOSIXError(socketError))
         }
     }
 
-    private static func shortError(_ err: NWError) -> String {
-        let desc = "\(err)"
-        if desc.contains("ECONNREFUSED") || desc.contains("Connection refused") { return "refused" }
-        if desc.contains("EHOSTUNREACH") || desc.contains("unreachable")       { return "unreachable" }
-        if desc.contains("ETIMEDOUT") || desc.localizedStandardContains("time") { return "timeout" }
-        if desc.lowercased().contains("dns")                                    { return "dns" }
-        if desc.lowercased().contains("tls")                                    { return "tls" }
-        return "error"
-    }
-
-    private final class _Box<T> {
-        var value: T
-        init(_ v: T) { value = v }
+    private static func shortPOSIXError(_ code: Int32) -> String {
+        switch code {
+        case ECONNREFUSED:
+            return "refused"
+        case EHOSTUNREACH, ENETUNREACH:
+            return "unreachable"
+        case ETIMEDOUT:
+            return "timeout"
+        case ECANCELED:
+            return "cancelled"
+        default:
+            return "error"
+        }
     }
 }

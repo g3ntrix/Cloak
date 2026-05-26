@@ -1,74 +1,66 @@
 # کلوک
 
-**کلوک** یک اپلیکیشن macOS است که ترافیک را از طریق یک پل محلی SNI Spoofing و هستهٔ تعبیه‌شدهٔ **Xray** عبور می‌دهد. می‌توانید پروفایل‌های CDN (مانند VLESS، Trojan و بیشتر) را وارد کنید، با یک کلیک متصل شوید و در صورت نیاز، تمام ترافیک سیستم را از طریق پراکسی محلی SOCKS عبور دهید.
+[English](README.md)
 
-این برنامه کاربر را از دردسر ستاپ‌های پیچیده و داشتن کلاینت جداگانهٔ V2Ray برای اتصال نجات می‌دهد. تنها کافی است یک کانفیگ سالم داشته باشید و دکمهٔ Connect را بزنید.
+**کلوک یک اپلیکیشن ساده برای macOS است تا با کانفیگ‌های CDN بدون دردسرهای معمول وصل شوید.**
+
+پروفایل‌ها را وارد کنید، پینگ بگیرید، بهترین گزینه را انتخاب کنید و وصل شوید. کلوک اتصال را آماده می‌کند و تنظیمات لازم macOS را خودش انجام می‌دهد تا لازم نباشد با اسکریپت، ترمینال یا چند کلاینت جداگانه درگیر شوید.
 
 <table>
   <tr>
     <td align="center" width="50%">
       <strong>Dashboard</strong><br />
-      <img src="macos-app/screenshot/app-dashboard.png" alt="Dashboard — connect, Egress IP, session stats" width="100%" />
+      <img src="macos-app/screenshot/app-dashboard.png" alt="Cloak dashboard" width="100%" />
     </td>
     <td align="center" width="50%">
       <strong>Profiles</strong><br />
-      <img src="macos-app/screenshot/profiles.png" alt="Profiles — import, ping, bulk actions" width="100%" />
+      <img src="macos-app/screenshot/profiles.png" alt="Cloak profiles" width="100%" />
     </td>
   </tr>
   <tr>
     <td align="center">
       <strong>Menu bar</strong><br />
-      <img src="macos-app/screenshot/menubar.png" alt="Menu bar popover" width="100%" />
+      <img src="macos-app/screenshot/menubar.png" alt="Cloak menu bar" width="100%" />
     </td>
     <td align="center">
       <strong>Light mode</strong><br />
-      <img src="macos-app/screenshot/light-mode.png" alt="Cloak in light appearance" width="100%" />
+      <img src="macos-app/screenshot/light-mode.png" alt="Cloak light mode" width="100%" />
     </td>
   </tr>
 </table>
 
-## ویژگی‌ها
+## چرا کلوک
 
-- **One-click connect** — شروع/توقف Listener پایتون و Xray از Dashboard یا Menu bar
-- **Profile library** — چسباندن لینک یا Drag-and-Drop فایل متنی (`vless`، `trojan`، `vmess`، `ss`)
-- **Real profile ping** — اندازه‌گیری latency از داخل tunnel هر پروفایل؛ ping همه با امکان لغو؛ حذف پروفایل‌های بدون ping
-- **VPN Tunnel Mode (utun)** — عبور ۱۰۰٪ ترافیک سیستم (TCP و UDP) در لایهٔ شبکه از طریق یک رابط مجازی کاملاً پویا (`utun`)، بدون بروز خطاهای تداخل "resource busy" با سایر برنامه‌های VPN
-- **System proxy toggle** — عبور ترافیک برنامه‌های macOS از پروکسی‌های محلی SOCKS و HTTP کلوک
-- **Auto-DNS Management** — بازنویسی خودکار تنظیمات فعال DNS به سرورهای عمومی ایمن (`1.1.1.1` / `8.8.8.8`) در هنگام برقراری تونل، تخلیه حافظه پنهان DNS و بازیابی یکپارچه پیش‌فرض‌های DHCP در زمان قطع اتصال
-- **LAN sharing** — Listener فقط روی همین مک Bind شود یا روی شبکه در دسترس باشد (Local / LAN)
-- **Egress IP** — نمایش public IP شما از طریق پروفایل فعال در زمان اتصال
-- **Menu bar control** — اتصال، تعویض پروفایل و بازکردن پنجرهٔ اصلی بدون بازماندن دائمی آن
-- **Appearance** — پیروی از system یا انتخاب دستی Light / Dark
-- **Logs** — ثبت اختیاری خروجی Listener و Xray برای troubleshooting
+- اتصال از داخل یک اپلیکیشن تمیز macOS
+- وارد کردن لینک پروفایل یا فایل متنی
+- پینگ گرفتن از پروفایل‌ها قبل از اتصال
+- عبور تمام ترافیک با حالت Tunnel
+- استفاده از حالت System proxy برای مسیر‌دهی سبک‌تر
+- نمایش IP خروجی و مصرف ترافیک نشست
+- کنترل سریع از menu bar
+- بدون تنظیم دستی، بدون نصب جداگانه core، بدون کار با ترمینال
 
-## دانلود (macOS)
+## دانلود
 
-آخرین فایل **`.dmg`** را از [GitHub Releases](https://github.com/g3ntrix/Cloak/releases) دریافت کنید.
+آخرین فایل **DMG** را از [GitHub Releases](https://github.com/g3ntrix/Cloak/releases) دریافت کنید.
 
-> **نسخهٔ بدون امضا:** ممکن است macOS در اولین اجرا برنامه را مسدود کند. در صورت نیاز از **System Settings → Privacy & Security** اجازهٔ اجرا را بدهید.
+بعد از باز کردن DMG، برنامه **Cloak** را به **Applications** بکشید.
+
+چون کلوک یک community build متن‌باز است، macOS ممکن است برای اجرای اول تایید بخواهد. اگر چنین شد، به **System Settings -> Privacy & Security** بروید و **Open Anyway** را بزنید.
 
 ## شروع سریع
 
-1. کلوک را باز کنید و مجوز یک‌بارهٔ Helper را بدهید (Settings).
-2. اگر از پل SNI داخلی استفاده می‌کنید، JSON مربوط به Cloudflare Listener را در **Settings** قرار دهید.
-3. یک پروفایل را انتخاب کنید، سپس در Dashboard روی **Connect** بزنید.
-4. حالت اتصال را روی **Tunnel** برای تجربه کامل مسیریابی در لایه سیستم (VPN) بگذارید، یا **System proxy** را روشن کنید تا از پروکسی SOCKS/HTTP استفاده شود.
+1. کلوک را باز کنید.
+2. مجوز یک‌باره را تایید کنید.
+3. پروفایل‌ها را وارد یا paste کنید.
+4. پینگ بگیرید و یک پروفایل سالم انتخاب کنید.
+5. روی **Connect** بزنید.
 
-## ساختار پروژه
-
-| مسیر | توضیح |
-|------|-------|
-| `macos-app/` | کلاینت macOS مبتنی بر SwiftUI (Cloak) |
-| `main.py` / listener | پل SNI Spoofing پایتون (نسخهٔ bundled یا مسیر توسعه) |
-
-## پشتیبانی و منبع
-
-- **مخزن:** [github.com/g3ntrix/Cloak](https://github.com/g3ntrix/Cloak) — اگر کلوک برایتان مفید بود، ستاره دادن به مخزن باعث دلگرمی است
-- **نویسنده:** [t.me/g3ntrix](https://t.me/g3ntrix)
+ایده همین است: شما یک پروفایل سالم می‌آورید، کلوک بقیه کارها را انجام می‌دهد.
 
 ## حمایت مالی
 
-اگر این پروژه برای شما مفید بوده، می‌توانید از توسعهٔ آن حمایت کنید:
+اگر کلوک برایتان مفید بود، می‌توانید از توسعه آن حمایت کنید:
 
 - **TON:** `UQCriHkMUa6h9oN059tyC23T13OsQhGGM3hUS2S4IYRBZgvx`
 - **USDT (BEP20):** `0x71F41696c60C4693305e67eE3Baa650a4E3dA796`

@@ -20,9 +20,6 @@ enum PortAvailability {
         guard fd >= 0 else { return false }
         defer { close(fd) }
 
-        var yes: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
-
         var addr = sockaddr_in()
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         addr.sin_family = sa_family_t(AF_INET)
@@ -41,11 +38,12 @@ enum PortAvailability {
             _ = inet_pton(AF_INET, cstr, &addr.sin_addr)
         }
 
-        let r = withUnsafePointer(to: &addr) {
+        let bindResult = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
-        return r == 0
+        guard bindResult == 0 else { return false }
+        return listen(fd, 1) == 0
     }
 }

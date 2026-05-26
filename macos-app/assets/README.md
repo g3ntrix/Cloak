@@ -23,5 +23,5 @@ XRAY_VERSION=v26.3.27 ./macos-app/scripts/fetch-release-assets.sh
 Then from the repo root:
 
 ```bash
-VERSION=1.0.0 ./scripts/build-release.sh
+VERSION=1.0.0 ./macos-app/scripts/build-release.sh
 ```

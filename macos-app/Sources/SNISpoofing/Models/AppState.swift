@@ -738,24 +738,34 @@ final class AppState: ObservableObject {
     }
 
     private func awaitListenerReady() async throws {
-        let host = Self.resolvedPingHost(listenerProject.LISTEN_HOST)
-        let port = UInt16(clamping: listenerProject.LISTEN_PORT)
-        for _ in 0 ..< 30 {
+        let host = listenerProject.LISTEN_HOST
+        let port = listenerProject.LISTEN_PORT
+        guard port > 0, port <= 65_535 else {
+            throw NSError(
+                domain: "SNISpoofing",
+                code: 32,
+                userInfo: [NSLocalizedDescriptionKey: "Local listener port is invalid."]
+            )
+        }
+
+        for _ in 0 ..< 80 {
             if !python.isRunning() {
                 throw NSError(
                     domain: "SNISpoofing",
                     code: 31,
-                    userInfo: [NSLocalizedDescriptionKey: "Python listener exited before becoming ready. Open Logs for the first traceback."]
+                    userInfo: [NSLocalizedDescriptionKey: "Cloak's local listener stopped while starting. Try again; Cloak cleans up the helper before the next start."]
                 )
             }
-            let r = await RealPingService.ping(host: host, port: port, timeout: 1)
-            if r.millis != nil { return }
-            try await Task.sleep(nanoseconds: 350_000_000)
+            if !PortAvailability.isAvailable(port: port, host: host) {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                if python.isRunning() { return }
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
         }
         throw NSError(
             domain: "SNISpoofing",
             code: 30,
-            userInfo: [NSLocalizedDescriptionKey: "Listener did not accept connections in time. Check Settings → Cloudflare JSON (LISTEN_HOST / LISTEN_PORT)."]
+            userInfo: [NSLocalizedDescriptionKey: "Cloak couldn't bring up its local listener in time. Try again; stale helpers are cleaned up automatically."]
         )
     }
 
