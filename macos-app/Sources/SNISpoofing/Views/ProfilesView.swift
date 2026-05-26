@@ -127,17 +127,13 @@ struct ProfilesView: View {
             Button {
                 showImport = true
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .bold))
-                    Text("Add")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 26, height: 22)
             }
             .buttonStyle(.bordered)
-            .controlSize(.regular)
+            .controlSize(.small)
+            .help("Add profiles")
         }
     }
 

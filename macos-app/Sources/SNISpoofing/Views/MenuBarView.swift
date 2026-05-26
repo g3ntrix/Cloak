@@ -89,7 +89,7 @@ struct MenuBarView: View {
                     Text(app.status.isRunning ? "Stop" : "Connect")
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .foregroundColor(app.status.isRunning ? .white : Color.primary.opacity(0.92))
+                .foregroundColor(.white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(

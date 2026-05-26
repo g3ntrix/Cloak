@@ -375,7 +375,7 @@ struct PowerButton: View {
                 if isBusy {
                     ProgressView().controlSize(.small)
                         .progressViewStyle(.circular)
-                        .tint(isRunning ? .white : .primary)
+                        .tint(.white)
                 } else {
                     Image(systemName: isRunning ? "stop.fill" : "power")
                         .font(.system(size: 13, weight: .bold))
@@ -383,7 +383,7 @@ struct PowerButton: View {
                 Text(isRunning ? "Disconnect" : "Connect")
                     .font(.system(size: 13, weight: .semibold))
             }
-            .foregroundColor(isRunning ? .white : Color.primary.opacity(0.9))
+            .foregroundColor(.white)
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
             .background(
