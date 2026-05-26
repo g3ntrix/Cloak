@@ -302,6 +302,11 @@ final class AppState: ObservableObject {
                 privilegesInstalled = true
             }
 
+            // Reap any orphan cloak-core left behind by a previous crash/force-quit
+            // — otherwise the new listener fails to bind LISTEN_PORT (EADDRINUSE)
+            // and xray ends up dialing the dead orphan, producing a wall of EOFs.
+            SudoPrivilege.killLeftoverListener()
+
             try python.start(config: listenerProject)
 
             try await awaitListenerReady()
@@ -551,6 +556,7 @@ final class AppState: ObservableObject {
             privilegesInstalled = true
         }
         if !python.isRunning() {
+            SudoPrivilege.killLeftoverListener()
             try python.start(config: listenerProject)
             listenerStartedForPingOnly = true
         }
@@ -702,6 +708,7 @@ final class AppState: ObservableObject {
                 privilegesInstalled = true
             }
             if !python.isRunning() {
+                SudoPrivilege.killLeftoverListener()
                 try python.start(config: listenerProject)
                 listenerStartedForPingOnly = true
                 startedListener = true
