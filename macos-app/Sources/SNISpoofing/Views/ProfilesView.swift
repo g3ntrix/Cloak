@@ -196,10 +196,15 @@ struct ProfilesView: View {
                 }
 
                 Toggle(isOn: $sortByPing) {
-                    Text("Sort by ping").font(.system(size: 11))
+                    Text("Sort by ping")
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
 
                 if !app.isPingBatchRunning,
                    !app.profilePingResults.isEmpty,
@@ -214,27 +219,30 @@ struct ProfilesView: View {
                 Spacer()
 
                 if selectionMode {
-                    Button("All") { checkedIDs = Set(app.profiles.map(\.id)) }
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                    if !checkedIDs.isEmpty {
-                        Button("Export (\(checkedIDs.count))") {
-                            exportProfiles(selectedProfiles)
+                    HStack(spacing: 8) {
+                        Button("All") { checkedIDs = Set(app.profiles.map(\.id)) }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                        if !checkedIDs.isEmpty {
+                            Button("Export (\(checkedIDs.count))") {
+                                exportProfiles(selectedProfiles)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            Button("Delete (\(checkedIDs.count))", role: .destructive) {
+                                showBulkDelete = true
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        Button("Delete (\(checkedIDs.count))", role: .destructive) {
-                            showBulkDelete = true
+                        Button("Done") {
+                            selectionMode = false
+                            checkedIDs.removeAll()
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
-                    Button("Done") {
-                        selectionMode = false
-                        checkedIDs.removeAll()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
                 } else {
                     Button("Select") { selectionMode = true }
                         .buttonStyle(.borderless)
@@ -250,7 +258,13 @@ struct ProfilesView: View {
             EmptyState(showDropHint: dropActive, onImport: { showImport = true })
         } else {
             ScrollView {
-                LazyVStack(spacing: 6) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.adaptive(minimum: 210, maximum: 320), spacing: 8, alignment: .top)
+                    ],
+                    alignment: .leading,
+                    spacing: 8
+                ) {
                     ForEach(orderedProfiles) { p in
                         ProfileRow(
                             profile: p,
@@ -310,6 +324,7 @@ struct ProfilesView: View {
                         }
                     }
                 }
+                .padding(1)
                 .padding(.bottom, 16)
             }
             .scrollIndicators(.hidden)
@@ -534,7 +549,7 @@ private struct ProfileRow: View {
     @FocusState private var renameFocus: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             if selectionMode {
                 Toggle("", isOn: Binding(get: { isChecked }, set: { _ in onToggleCheck() }))
                     .toggleStyle(.checkbox)
@@ -542,24 +557,19 @@ private struct ProfileRow: View {
             }
             kindBadge
 
-            VStack(alignment: .leading, spacing: 2) {
-                if isRenaming {
-                    TextField("Profile name", text: $renameDraft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .semibold))
-                        .focused($renameFocus)
-                        .onAppear { renameFocus = true }
-                        .onSubmit { onCommitRename() }
-                        .onExitCommand { onCancelRename() }
-                } else {
-                    Text(profile.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                }
-                Text(subtitle)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            if isRenaming {
+                TextField("Profile name", text: $renameDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .focused($renameFocus)
+                    .onAppear { renameFocus = true }
+                    .onSubmit { onCommitRename() }
+                    .onExitCommand { onCancelRename() }
+            } else {
+                Text(profile.name)
+                    .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
 
             Spacer(minLength: 0)
@@ -574,8 +584,10 @@ private struct ProfileRow: View {
                     .help("Active profile")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minHeight: 42)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(rowFill)
@@ -601,18 +613,11 @@ private struct ProfileRow: View {
         ZStack {
             RoundedRectangle(cornerRadius: 8)
                 .fill(accent.opacity(0.22))
-                .frame(width: 30, height: 30)
+                .frame(width: 26, height: 26)
             Text(profile.kind.display.prefix(2).uppercased())
-                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
                 .foregroundStyle(accent)
         }
-    }
-
-    private var subtitle: String {
-        let sni = profile.tls.serverName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !sni.isEmpty { return sni }
-        if !profile.transport.host.isEmpty { return profile.transport.host }
-        return "\(profile.server):\(profile.serverPort)"
     }
 
     private var accent: Color {
@@ -638,21 +643,21 @@ private struct PingChip: View {
                     ProgressView().controlSize(.mini)
                 } else if let ms = result?.millis {
                     Text("\(ms) ms")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
                         .foregroundStyle(color(for: ms))
                 } else if result?.error != nil {
                     Image(systemName: "xmark.circle")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.red)
                 } else {
                     Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 10))
+                        .font(.system(size: 9))
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(minWidth: 40, minHeight: 16)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .frame(minWidth: 34, minHeight: 14)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(AppTheme.subtleFill(for: colorScheme))
