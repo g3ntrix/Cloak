@@ -15,12 +15,13 @@ enum SudoPrivilege {
     static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
     static let tunHelperPath = "/usr/local/bin/cloak-tun"
     /// Bumped whenever any embedded script changes — forces re-install.
-    static let wrapperVersion = "13"
+    static let wrapperVersion = "14"
 
     enum SudoError: LocalizedError {
         case promptCancelled
         case installFailed(String)
         case missingListenerCore
+        case appTranslocated
 
         var errorDescription: String? {
             switch self {
@@ -30,6 +31,8 @@ enum SudoPrivilege {
                 return "Setup failed: \(msg)"
             case .missingListenerCore:
                 return "Bundled listener binary is missing. Reinstall Cloak from a full release build."
+            case .appTranslocated:
+                return "Move Cloak to Applications, open it from there, then approve macOS in Privacy & Security if asked."
             }
         }
     }
@@ -88,7 +91,16 @@ enum SudoPrivilege {
         guard fm.isExecutableFile(atPath: wrapperPath),
               fm.fileExists(atPath: sudoersPath)
         else { return false }
-        return selfCheck(wrapperPath, expectVersion: wrapperVersion)
+        guard selfCheck(wrapperPath, expectVersion: wrapperVersion),
+              let currentCorePath = ListenerCore.bundledExecutablePath(),
+              fm.isExecutableFile(atPath: currentCorePath),
+              installedListenerCorePath() == currentCorePath
+        else { return false }
+        return true
+    }
+
+    static func isRunningFromAppTranslocation() -> Bool {
+        Bundle.main.bundleURL.path.contains("/AppTranslocation/")
     }
 
     static func proxyHelperReady() -> Bool {
@@ -126,8 +138,29 @@ enum SudoPrivilege {
         }
     }
 
+    private static func installedListenerCorePath() -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        p.arguments = ["-n", wrapperPath, "--core-path"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        do {
+            try p.run()
+            p.waitUntilExit()
+            guard p.terminationStatus == 0 else { return nil }
+            return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return nil
+        }
+    }
+
     /// Prompts once for an admin password and installs both helpers + the sudoers rule.
     static func install() throws {
+        if isRunningFromAppTranslocation() {
+            throw SudoError.appTranslocated
+        }
         guard let corePath = ListenerCore.bundledExecutablePath() else {
             throw SudoError.missingListenerCore
         }
@@ -143,6 +176,7 @@ enum SudoPrivilege {
         set -euo pipefail
         if [ "${1:-}" = "--self-check" ]; then echo "\(wrapperVersion)"; exit 0; fi
         if [ "${1:-}" = "--wrapper-version" ]; then echo "\(wrapperVersion)"; exit 0; fi
+        if [ "${1:-}" = "--core-path" ]; then echo "\(corePath)"; exit 0; fi
         if [ "${1:-}" = "--kill-leftover" ]; then
           /usr/bin/pkill -f \(wrapperPath) >/dev/null 2>&1 || true
           /usr/bin/pkill -f cloak-core- >/dev/null 2>&1 || true
@@ -150,7 +184,7 @@ enum SudoPrivilege {
         fi
         CORE=\"\(corePath)\"
         if [ ! -x \"$CORE\" ]; then
-          echo \"error: bundled listener missing at $CORE — reinstall Cloak.\" >&2
+          echo \"error: Cloak's helper points to an old app location. Reopen Cloak from Applications and approve the helper setup again.\" >&2
           exit 12
         fi
         export CLOAK_CONFIG=\"\(configPath)\"

@@ -8,9 +8,15 @@ enum RealPingService {
         let error: String?
     }
 
-    /// HTTP probe through SOCKS — measures end-to-end time for traffic routed by Xray.
-    /// A ping only succeeds when the probe returns the expected 204 response.
-    private static let socksProbeURL = "http://connectivitycheck.gstatic.com/generate_204"
+    /// Lightweight HTTP probes through SOCKS. A real HTTP response from any one
+    /// endpoint proves the profile can carry traffic; relying on a single
+    /// captive-portal host makes healthy profiles look dead in some regions.
+    private static let socksProbeURLs = [
+        "http://cp.cloudflare.com/generate_204",
+        "http://connectivitycheck.gstatic.com/generate_204",
+        "http://detectportal.firefox.com/success.txt",
+        "http://www.apple.com/library/test/success.html",
+    ]
 
     static func pingViaSocks(
         proxyHost: String,
@@ -19,7 +25,7 @@ enum RealPingService {
     ) async -> Result {
         let proxy = socksEndpoint(host: proxyHost, port: proxyPort)
         return await Task.detached(priority: .utility) {
-            curlTimingThroughSocks(socks: proxy, url: socksProbeURL, timeout: timeout)
+            curlTimingThroughSocks(socks: proxy, timeout: timeout)
         }.value
     }
 
@@ -31,10 +37,23 @@ enum RealPingService {
         return "\(t):\(port)"
     }
 
-    private static func curlTimingThroughSocks(socks: String, url: String, timeout: TimeInterval) -> Result {
+    private static func curlTimingThroughSocks(socks: String, timeout: TimeInterval) -> Result {
+        let perProbeTimeout = max(2, min(4, Int((timeout / Double(socksProbeURLs.count)).rounded(.up))))
+        var last = Result(millis: nil, error: "failed")
+
+        for url in socksProbeURLs {
+            let result = curlTimingThroughSocks(socks: socks, url: url, timeoutSeconds: perProbeTimeout)
+            if result.millis != nil { return result }
+            last = result
+        }
+
+        return last
+    }
+
+    private static func curlTimingThroughSocks(socks: String, url: String, timeoutSeconds: Int) -> Result {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        let timeoutStr = String(Int(timeout))
+        let timeoutStr = String(timeoutSeconds)
         p.arguments = [
             "-sS", "-o", "/dev/null",
             "--connect-timeout", timeoutStr,
@@ -60,7 +79,7 @@ enum RealPingService {
             .split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" })
         if p.terminationStatus == 0,
            fields.count == 2,
-           fields[0] == "204",
+           isSuccessfulProbeHTTPCode(String(fields[0])),
            let seconds = Double(fields[1]),
            seconds > 0 {
             let ms = Int((seconds * 1000).rounded())
@@ -81,6 +100,11 @@ enum RealPingService {
         if let httpCode, httpCode != "000", httpCode != "204" { return "http \(httpCode)" }
         if httpCode == "000" { return "no response" }
         return msg.isEmpty ? "failed" : "failed"
+    }
+
+    private static func isSuccessfulProbeHTTPCode(_ code: String) -> Bool {
+        guard let n = Int(code) else { return false }
+        return (200 ... 399).contains(n)
     }
 
     /// Direct TCP connect to host:port (local bridge reachability).

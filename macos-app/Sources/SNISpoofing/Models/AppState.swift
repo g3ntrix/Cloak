@@ -324,6 +324,14 @@ final class AppState: ObservableObject {
             // system proxy onto it — otherwise the first wave of system
             // traffic races the listener coming up and looks like a failure.
             try await Task.sleep(nanoseconds: 400_000_000)
+            let health = await RealPingService.pingViaSocks(proxyHost: settings.resolvedSocksHostForLocalClient, proxyPort: settings.listenPort, timeout: 8)
+            guard health.millis != nil else {
+                throw NSError(
+                    domain: "SNISpoofing",
+                    code: 41,
+                    userInfo: [NSLocalizedDescriptionKey: "This profile did not complete a test request. Try another profile or update the Cloudflare settings."]
+                )
+            }
 
             if settings.connectionMode == .tunnel {
                 // Clear any system proxy left over from a previous proxy-mode session
@@ -801,7 +809,7 @@ final class AppState: ObservableObject {
     }
 
     private func runEgressLookup(proxyHost: String, proxyPort: Int) async {
-        let maxAttempts = 6
+        let maxAttempts = 2
         for attempt in 0 ..< maxAttempts {
             guard status.isRunning else { return }
             do {

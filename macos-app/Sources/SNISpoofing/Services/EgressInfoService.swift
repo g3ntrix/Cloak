@@ -85,7 +85,7 @@ enum EgressInfoService {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
         p.arguments = [
-            "-sS", "--max-time", "25",
+            "-sS", "--max-time", "8",
             "--socks5-hostname", socks,
             url,
         ]
