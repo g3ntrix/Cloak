@@ -159,12 +159,12 @@ struct SettingsView: View {
     }
 
     private var proxyCard: some View {
-        Card(maxHeight: .infinity) {
+        Card(alignment: .topLeading, maxHeight: .infinity) {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 17))
                     .foregroundStyle(.cyan)
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text("Local proxy listeners")
                         .font(.system(size: 13, weight: .semibold))
                     ListenScopeToggle(exposesToLAN: Binding(
@@ -177,39 +177,39 @@ struct SettingsView: View {
                             Task { await app.reconnectIfRunning() }
                         }
                     ))
-                    HStack(alignment: .center, spacing: 8) {
-                        Text("SOCKS")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        TextField("", text: proxyPortBinding)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12, design: .monospaced))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .frame(width: 64)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(AppTheme.controlFill(for: colorScheme))
-                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.stroke(for: colorScheme)))
-                            )
-                        Text("HTTP")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        TextField("", text: httpPortBinding)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12, design: .monospaced))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .frame(width: 64)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(AppTheme.controlFill(for: colorScheme))
-                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.stroke(for: colorScheme)))
-                            )
+                    Text(app.settings.exposesToLAN
+                         ? "Other devices on your network can use these ports."
+                         : "Only this Mac can use these ports.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(alignment: .top, spacing: 10) {
+                        portField(title: "SOCKS", text: proxyPortBinding)
+                        portField(title: "HTTP", text: httpPortBinding)
                     }
                 }
                 Spacer(minLength: 0)
             }
+        }
+    }
+
+    private func portField(title: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            TextField("", text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(AppTheme.controlFill(for: colorScheme))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.stroke(for: colorScheme)))
+                )
         }
     }
 
