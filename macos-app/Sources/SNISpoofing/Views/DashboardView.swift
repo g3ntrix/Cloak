@@ -210,25 +210,24 @@ struct DashboardView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(.orange)
                     .frame(width: 22)
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text("LAN sharing")
                             .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                         StatusPill(text: bindsAllInterfaces ? "On" : "Local", tint: bindsAllInterfaces ? .green : .secondary)
-                        Spacer(minLength: 0)
                     }
-                    HStack(spacing: 8) {
-                        Text(verbatim: ip)
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .textSelection(.enabled)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                        Spacer(minLength: 4)
-                        EndpointChip(label: "SOCKS", value: "\(app.settings.listenPort)", tint: .orange)
-                        EndpointChip(label: "HTTP", value: "\(app.settings.httpPort)", tint: .cyan)
-                    }
+                    Text(verbatim: ip)
+                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 3) {
+                    EndpointChip(label: "SOCKS", value: "\(app.settings.listenPort)", tint: .orange)
+                    EndpointChip(label: "HTTP", value: "\(app.settings.httpPort)", tint: .cyan)
                 }
                 Button {
                     let pb = NSPasteboard.general
@@ -585,13 +584,14 @@ private struct EndpointChip: View {
             Text(label)
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(tint)
+                .frame(width: 34, alignment: .leading)
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
         }
         .lineLimit(1)
         .fixedSize()
         .padding(.horizontal, 7)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2.5)
         .background(
             Capsule(style: .continuous)
                 .fill(tint.opacity(0.12))

@@ -28,18 +28,33 @@ struct ConnectionRouteCard: View {
                 }
                 HStack(alignment: .top, spacing: 4) {
                     routeNode(icon: "laptopcomputer", primary: "This Mac", secondary: "Origin", tint: .secondary)
-                    RouteFlowConnector(active: active, tint: .blue)
+                    RouteFlowConnector(active: active, tint: .blue, intensity: intensity, downRatio: downRatio)
                     routeNode(icon: "cloud.fill", primary: "Cloudflare",
                               secondary: app.listenerProject.FAKE_SNI, tint: .orange)
-                    RouteFlowConnector(active: active, tint: .indigo)
+                    RouteFlowConnector(active: active, tint: .indigo, intensity: intensity, downRatio: downRatio)
                     routeNode(icon: "server.rack", primary: app.activeProfile?.name ?? "Server",
                               secondary: "Proxy node", tint: .purple)
-                    RouteFlowConnector(active: active, tint: .mint)
+                    RouteFlowConnector(active: active, tint: .mint, intensity: intensity, downRatio: downRatio)
                     routeNode(icon: "globe", primary: internetPrimary,
                               secondary: app.egressIP ?? "—", tint: .mint)
                 }
             }
         }
+    }
+
+    /// 0 (idle) … 1 (heavy traffic) on a log scale — drives pulse cadence.
+    private var intensity: Double {
+        guard active else { return 0 }
+        let rate = app.downloadBytesPerSec + app.uploadBytesPerSec
+        if rate < 1_000 { return 0 }
+        let scaled = log10(rate / 1_000) / log10(4_000)  // ~1KB/s → 0, ~4MB/s → 1
+        return min(1, max(0.04, scaled))
+    }
+
+    /// Share of traffic that is download — biases pulse direction.
+    private var downRatio: Double {
+        let total = app.downloadBytesPerSec + app.uploadBytesPerSec
+        return total > 0 ? app.downloadBytesPerSec / total : 0.5
     }
 
     private var internetPrimary: String {
@@ -73,34 +88,125 @@ struct ConnectionRouteCard: View {
     }
 }
 
-/// A dashed link with dots that travel left→right while `active`.
+/// A dashed link along which discrete "packets" travel. Instead of a constant
+/// stream, single dots are emitted at irregular intervals — frequently under
+/// heavy traffic, and as an occasional heartbeat when idle. Each packet eases
+/// across the link and fades in/out, so motion feels organic rather than
+/// mechanical. Direction is biased by `downRatio` (download flows right→left
+/// back toward the Mac; upload flows left→right).
 struct RouteFlowConnector: View {
     var active: Bool
     var tint: Color
+    /// 0 (idle) … 1 (heavy) — controls how often packets spawn and how fast they move.
+    var intensity: Double
+    /// Share of traffic that is download (0…1) — biases packet direction.
+    var downRatio: Double
+
+    private struct Packet: Identifiable {
+        let id = UUID()
+        let birth: TimeInterval
+        let life: TimeInterval     // seconds to cross the link
+        let reverse: Bool          // true = right→left (download)
+        let size: CGFloat
+    }
+
+    @State private var packets: [Packet] = []
+    @State private var lastSpawn: TimeInterval = 0
+    @State private var gap: TimeInterval = 0.6
+
+    // ~30 Hz scheduler that decides when to emit the next packet.
+    private let ticker = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        Group {
-            if active {
-                TimelineView(.animation) { context in
-                    Canvas { gc, size in
-                        drawTrack(gc, size)
-                        let t = context.date.timeIntervalSinceReferenceDate
-                        let count = 3
-                        for i in 0 ..< count {
-                            let phase = (t * 0.55 + Double(i) / Double(count))
-                                .truncatingRemainder(dividingBy: 1)
-                            let x = CGFloat(phase) * size.width
-                            let dot = CGRect(x: x - 2.5, y: size.height / 2 - 2.5, width: 5, height: 5)
-                            gc.fill(Path(ellipseIn: dot), with: .color(tint))
-                        }
-                    }
-                }
-            } else {
-                Canvas { gc, size in drawTrack(gc, size) }
+        TimelineView(.animation) { context in
+            Canvas { gc, size in
+                drawTrack(gc, size)
+                guard active else { return }
+                let now = context.date.timeIntervalSinceReferenceDate
+                render(gc, size, now: now)
             }
         }
         .frame(maxWidth: .infinity)
         .frame(height: 30)
+        .onReceive(ticker) { date in
+            guard active else {
+                if !packets.isEmpty { packets.removeAll() }
+                return
+            }
+            spawnTick(now: date.timeIntervalSinceReferenceDate)
+        }
+        .onChange(of: active) { isActive in
+            if !isActive { packets.removeAll() }
+        }
+    }
+
+    // MARK: - Spawning
+
+    private func spawnTick(now: TimeInterval) {
+        // Drop packets that have completed their life + fade.
+        packets.removeAll { now - $0.birth > $0.life }
+        if lastSpawn == 0 { lastSpawn = now; gap = nextGap() }
+        if now - lastSpawn >= gap {
+            packets.append(makePacket(now))
+            lastSpawn = now
+            gap = nextGap()
+        }
+    }
+
+    private func makePacket(_ now: TimeInterval) -> Packet {
+        // Faster crossings when busy, slower drifts when calm.
+        let base = 1.7 - intensity * 1.1                 // ~1.7s idle → ~0.6s busy
+        let life = base * Double.random(in: 0.82 ... 1.18)
+        let reverse = Double.random(in: 0 ... 1) < downRatio
+        let size = CGFloat(Double.random(in: 4.0 ... 5.5))
+        return Packet(birth: now, life: life, reverse: reverse, size: size)
+    }
+
+    /// Time until the next packet — short under load, a slow heartbeat when idle.
+    private func nextGap() -> TimeInterval {
+        if intensity <= 0 {
+            return Double.random(in: 2.4 ... 4.0)        // idle heartbeat
+        }
+        // Busy → ~0.28–0.7s, light → ~0.8–1.8s.
+        let lo = 0.75 - intensity * 0.47
+        let hi = 1.8 - intensity * 1.1
+        return Double.random(in: lo ... max(lo + 0.05, hi))
+    }
+
+    // MARK: - Rendering
+
+    private func render(_ gc: GraphicsContext, _ size: CGSize, now: TimeInterval) {
+        let y = size.height / 2
+        for p in packets {
+            let age = now - p.birth
+            guard age >= 0, age <= p.life else { continue }
+            let progress = age / p.life
+            let eased = smoothstep(progress)
+            let xFrac = p.reverse ? (1 - eased) : eased
+            let x = CGFloat(xFrac) * size.width
+            let alpha = envelope(progress)
+            let r = p.size / 2
+
+            // Soft glow trailing the head for a sense of motion.
+            let glow = CGRect(x: x - r * 1.8, y: y - r * 1.8,
+                              width: r * 3.6, height: r * 3.6)
+            gc.fill(Path(ellipseIn: glow), with: .color(tint.opacity(0.18 * alpha)))
+
+            let dot = CGRect(x: x - r, y: y - r, width: p.size, height: p.size)
+            gc.fill(Path(ellipseIn: dot), with: .color(tint.opacity(alpha)))
+        }
+    }
+
+    /// Fade in over the first 18% and out over the last 22% of life.
+    private func envelope(_ t: Double) -> Double {
+        if t < 0.18 { return t / 0.18 }
+        if t > 0.78 { return max(0, (1 - t) / 0.22) }
+        return 1
+    }
+
+    private func smoothstep(_ t: Double) -> Double {
+        let x = min(1, max(0, t))
+        return x * x * (3 - 2 * x)
     }
 
     private func drawTrack(_ gc: GraphicsContext, _ size: CGSize) {
