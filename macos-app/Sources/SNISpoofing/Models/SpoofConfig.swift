@@ -29,6 +29,16 @@ struct AppSettings: Codable, Equatable {
     /// Light/dark appearance override. `.system` follows macOS.
     var appearanceMode: AppearanceMode = .system
 
+    /// When enabled, domains matching `bypassGeosites` / `bypassDomains` skip the
+    /// proxy and dial out directly (Xray `direct` outbound).
+    var bypassEnabled: Bool = false
+    /// Selected geosite category ids (e.g. `["cn", "private"]`). Each maps to a
+    /// `geosite:<id>` entry in the routing rule.
+    var bypassGeosites: [String] = []
+    /// Custom bypass entries passed verbatim to Xray's routing `domain` array.
+    /// Accepts plain domains, `domain:`, `geosite:`, `regexp:`, etc.
+    var bypassDomains: [String] = []
+
     enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
         case system, light, dark
         var id: String { rawValue }
@@ -75,7 +85,10 @@ struct AppSettings: Codable, Equatable {
         activeProfileID: UUID? = nil,
         logLevel: LogLevel = .warn,
         logsEnabled: Bool = false,
-        appearanceMode: AppearanceMode = .system
+        appearanceMode: AppearanceMode = .system,
+        bypassEnabled: Bool = false,
+        bypassGeosites: [String] = [],
+        bypassDomains: [String] = []
     ) {
         self.pythonProjectPath = pythonProjectPath
         self.listenHost = listenHost
@@ -87,6 +100,9 @@ struct AppSettings: Codable, Equatable {
         self.logLevel = logLevel
         self.logsEnabled = logsEnabled
         self.appearanceMode = appearanceMode
+        self.bypassEnabled = bypassEnabled
+        self.bypassGeosites = bypassGeosites
+        self.bypassDomains = bypassDomains
     }
 
     /// `true` when the SOCKS listener is exposed on all interfaces (LAN).
@@ -103,6 +119,7 @@ struct AppSettings: Codable, Equatable {
         case pythonProjectPath, listenHost, listenPort, httpPort
         case useSystemProxy, connectionMode
         case activeProfileID, logLevel, logsEnabled, appearanceMode
+        case bypassEnabled, bypassGeosites, bypassDomains
     }
 
     init(from decoder: Decoder) throws {
@@ -117,6 +134,9 @@ struct AppSettings: Codable, Equatable {
         logLevel = try c.decodeIfPresent(LogLevel.self, forKey: .logLevel) ?? .warn
         logsEnabled = try c.decodeIfPresent(Bool.self, forKey: .logsEnabled) ?? false
         appearanceMode = try c.decodeIfPresent(AppearanceMode.self, forKey: .appearanceMode) ?? .system
+        bypassEnabled = try c.decodeIfPresent(Bool.self, forKey: .bypassEnabled) ?? false
+        bypassGeosites = try c.decodeIfPresent([String].self, forKey: .bypassGeosites) ?? []
+        bypassDomains = try c.decodeIfPresent([String].self, forKey: .bypassDomains) ?? []
     }
 
     /// Host the **app** uses to talk to the local SOCKS (never `0.0.0.0` / “all interfaces”).

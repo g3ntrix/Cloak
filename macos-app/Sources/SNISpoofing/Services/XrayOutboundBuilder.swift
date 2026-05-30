@@ -117,15 +117,28 @@ enum XrayOutboundBuilder {
         ]
 
         let inbounds: [[String: Any]] = [socksInbound, httpInbound]
+
+        var rules: [[String: Any]] = []
+        // Bypass rules win over the catch-all: matching domains dial out directly.
+        if settings.bypassEnabled {
+            let bypassDomains = bypassDomainList(settings)
+            if !bypassDomains.isEmpty {
+                rules.append([
+                    "type": "field",
+                    "domain": bypassDomains,
+                    "outboundTag": "direct",
+                ])
+            }
+        }
+        rules.append([
+            "type": "field",
+            "inboundTag": ["socks-in", "http-in"],
+            "outboundTag": "proxy",
+        ])
+
         let route: [String: Any] = [
             "domainStrategy": "AsIs",
-            "rules": [
-                [
-                    "type": "field",
-                    "inboundTag": ["socks-in", "http-in"],
-                    "outboundTag": "proxy",
-                ],
-            ],
+            "rules": rules,
         ]
 
         let root: [String: Any] = [
@@ -143,6 +156,25 @@ enum XrayOutboundBuilder {
         ]
 
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    /// Combines selected geosite categories and custom entries into a deduped
+    /// list for an Xray routing `domain` array.
+    static func bypassDomainList(_ settings: AppSettings) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        // Only emit categories that exist in the bundled geosite.dat — an unknown
+        // `geosite:<id>` tag makes Xray refuse to start.
+        let geosite = settings.bypassGeosites
+            .filter { GeositeCatalog.category(for: $0) != nil }
+            .map { "geosite:\($0)" }
+        let custom = settings.bypassDomains
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        for entry in geosite + custom where seen.insert(entry).inserted {
+            result.append(entry)
+        }
+        return result
     }
 
     private static func xrayLogLevel(_ l: AppSettings.LogLevel) -> String {

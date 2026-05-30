@@ -4,11 +4,10 @@ struct SettingsView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var listenerDraft: String = ListenerProjectConfig.defaultJSONString()
-    @State private var jsonError: String?
-    @State private var saved = false
     @State private var privilegeError: String?
     @State private var showAdvanced = false
+    @State private var newDomain: String = ""
+    @State private var domainError: String?
 
     var body: some View {
         ScrollView {
@@ -21,6 +20,8 @@ struct SettingsView: View {
                     proxyCard
                 }
                 .fixedSize(horizontal: false, vertical: true)
+
+                routingCard
 
                 if showAdvanced {
                     advancedSection
@@ -39,7 +40,6 @@ struct SettingsView: View {
         }
         .scrollIndicators(.hidden)
         .onAppear {
-            listenerDraft = (try? app.listenerProject.encodeJSONString()) ?? ListenerProjectConfig.defaultJSONString()
             app.privilegesInstalled = SudoPrivilege.isInstalled()
         }
     }
@@ -84,56 +84,78 @@ struct SettingsView: View {
 
     private var cloudflareCard: some View {
         Card(maxHeight: .infinity) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("Cloudflare config", systemImage: "doc.text")
                         .font(.system(size: 13, weight: .semibold))
                     Spacer()
                     Button("Restore default") {
-                        listenerDraft = ListenerProjectConfig.factoryRestoreJSONString()
-                        jsonError = nil
+                        app.listenerProject.FAKE_SNI = ListenerProjectConfig.factoryRestore.FAKE_SNI
+                        app.listenerProject.CONNECT_IP = ListenerProjectConfig.factoryRestore.CONNECT_IP
+                        app.saveListenerProject()
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
-                    Button("Save") {
-                        jsonError = nil
-                        do {
-                            let parsed = try ListenerProjectConfig.decode(from: listenerDraft)
-                            app.listenerProject = parsed
-                            app.saveListenerProject()
-                            withAnimation { saved = true }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                withAnimation { saved = false }
-                            }
-                        } catch {
-                            jsonError = error.localizedDescription
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    if saved {
-                        Label("Saved", systemImage: "checkmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.green)
-                            .transition(.opacity)
-                    }
                 }
-                TextEditor(text: $listenerDraft)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 110, maxHeight: 160)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(AppTheme.controlFill(for: colorScheme))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.stroke(for: colorScheme)))
-                    )
-                if let e = jsonError {
-                    Label(e, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11)).foregroundStyle(.red)
-                }
+
+                cloudflareField(
+                    title: "Fake SNI",
+                    hint: "Domain presented in the TLS handshake.",
+                    text: fakeSNIBinding
+                )
+                cloudflareField(
+                    title: "Connect IP",
+                    hint: "Cloudflare edge IP to connect through.",
+                    text: connectIPBinding
+                )
+
+                Text("Cloak manages the remaining listener settings automatically.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private func cloudflareField(title: String, hint: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            TextField("", text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(AppTheme.controlFill(for: colorScheme))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.stroke(for: colorScheme)))
+                )
+            Text(hint)
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var fakeSNIBinding: Binding<String> {
+        Binding(
+            get: { app.listenerProject.FAKE_SNI },
+            set: {
+                app.listenerProject.FAKE_SNI = $0
+                app.saveListenerProject()
+            }
+        )
+    }
+
+    private var connectIPBinding: Binding<String> {
+        Binding(
+            get: { app.listenerProject.CONNECT_IP },
+            set: {
+                app.listenerProject.CONNECT_IP = $0
+                app.saveListenerProject()
+            }
+        )
     }
 
     private var proxyCard: some View {
@@ -255,6 +277,166 @@ struct SettingsView: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
+    private var routingCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Routing / Bypass", systemImage: "arrow.triangle.branch")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Toggle("", isOn: bypassEnabledBinding)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                Text("Selected domains skip the proxy and connect directly. Applies on the next Connect.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if app.settings.bypassEnabled {
+                    LazyVGrid(
+                        columns: Array(
+                            repeating: GridItem(.flexible(), spacing: 8),
+                            count: GeositeCatalog.categories.count
+                        ),
+                        alignment: .leading,
+                        spacing: 8
+                    ) {
+                        ForEach(GeositeCatalog.categories) { cat in
+                            geositeChip(cat)
+                        }
+                    }
+
+                    customDomainsSection
+                }
+            }
+        }
+    }
+
+    private func geositeChip(_ cat: GeositeCategory) -> some View {
+        let selected = app.settings.bypassGeosites.contains(cat.id)
+        return Button {
+            toggleGeosite(cat.id)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 12))
+                Text(cat.label)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(selected ? Color.accentColor.opacity(0.15) : AppTheme.controlFill(for: colorScheme))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(selected ? Color.accentColor.opacity(0.5) : AppTheme.stroke(for: colorScheme))
+                    )
+            )
+            .foregroundStyle(selected ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(cat.detail)
+    }
+
+    private var customDomainsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Custom domains")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            TextField("Add a domain, e.g. example.com", text: $newDomain)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(AppTheme.controlFill(for: colorScheme))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(domainError == nil ? AppTheme.stroke(for: colorScheme) : Color.red.opacity(0.6))
+                        )
+                )
+                .onSubmit { addCustomDomain() }
+                .onChange(of: newDomain) { _ in domainError = nil }
+
+            if let domainError {
+                Text(domainError)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.red)
+            }
+
+            if !app.settings.bypassDomains.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(app.settings.bypassDomains, id: \.self) { domain in
+                        DomainPill(domain: domain, colorScheme: colorScheme) {
+                            removeCustomDomain(domain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var bypassEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { app.settings.bypassEnabled },
+            set: {
+                app.settings.bypassEnabled = $0
+                app.saveSettings()
+            }
+        )
+    }
+
+    private func toggleGeosite(_ id: String) {
+        var selected = app.settings.bypassGeosites
+        if let idx = selected.firstIndex(of: id) {
+            selected.remove(at: idx)
+        } else {
+            selected.append(id)
+        }
+        app.settings.bypassGeosites = selected
+        app.saveSettings()
+    }
+
+    private func addCustomDomain() {
+        let entry = newDomain.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !entry.isEmpty else { return }
+        guard isValidBypassEntry(entry) else {
+            domainError = "“\(entry)” isn’t a valid domain or rule."
+            return
+        }
+        if !app.settings.bypassDomains.contains(entry) {
+            app.settings.bypassDomains.append(entry)
+            app.saveSettings()
+        }
+        newDomain = ""
+        domainError = nil
+    }
+
+    private func removeCustomDomain(_ domain: String) {
+        app.settings.bypassDomains.removeAll { $0 == domain }
+        app.saveSettings()
+    }
+
+    /// Accepts an Xray rule prefix (`domain:`/`geosite:`/`full:`/`regexp:`/`keyword:`)
+    /// with a non-empty value, or a plain hostname with at least one dot and a
+    /// 2+ letter TLD. Rejects bare tokens like "g".
+    private func isValidBypassEntry(_ entry: String) -> Bool {
+        let prefixes = ["domain:", "full:", "geosite:", "regexp:", "keyword:", "ext:"]
+        for prefix in prefixes where entry.lowercased().hasPrefix(prefix) {
+            return entry.count > prefix.count
+        }
+        let pattern = "^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$"
+        return entry.range(of: pattern, options: .regularExpression) != nil
+    }
+
     private var advancedCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
@@ -367,6 +549,78 @@ struct LabeledField: View {
                                 .stroke(AppTheme.stroke(for: colorScheme), lineWidth: 1)
                         )
                 )
+        }
+    }
+}
+
+/// A removable domain tag. The × turns red on hover.
+struct DomainPill: View {
+    let domain: String
+    let colorScheme: ColorScheme
+    let onRemove: () -> Void
+    @State private var hoveringX = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(domain)
+                .font(.system(size: 11, design: .monospaced))
+                .lineLimit(1)
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(hoveringX ? Color.red : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveringX = $0 }
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 7)
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(AppTheme.controlFill(for: colorScheme))
+                .overlay(Capsule().stroke(AppTheme.stroke(for: colorScheme)))
+        )
+    }
+}
+
+/// Simple wrapping layout — lays subviews left-to-right and wraps to a new line
+/// when the proposed width is exceeded. Used for the bypass domain pills.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let maxWidth = proposal.replacingUnspecifiedDimensions().width
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: maxWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }
