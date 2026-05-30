@@ -6,6 +6,9 @@ enum EgressInfoService {
     struct Egress: Equatable {
         let ip: String
         let country: String?
+        var city: String? = nil
+        var latitude: Double? = nil
+        var longitude: Double? = nil
     }
 
     enum EgressError: LocalizedError {
@@ -23,10 +26,23 @@ enum EgressInfoService {
     private struct IPInfoPayload: Decodable {
         let ip: String
         let country: String?
+        let city: String?
+        let loc: String?  // "lat,lon"
     }
     private struct IPApiPayload: Decodable {
         let query: String
         let countryCode: String?
+        let city: String?
+        let lat: Double?
+        let lon: Double?
+    }
+
+    /// Parses ipinfo's `"lat,lon"` string into a coordinate pair.
+    private static func parseLoc(_ loc: String?) -> (Double, Double)? {
+        guard let parts = loc?.split(separator: ","), parts.count == 2,
+              let lat = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+              let lon = Double(parts[1].trimmingCharacters(in: .whitespaces)) else { return nil }
+        return (lat, lon)
     }
 
     /// Fetches the egress IP as seen through the local SOCKS proxy (`host` must be usable by curl — not `0.0.0.0`).
@@ -52,7 +68,9 @@ enum EgressInfoService {
         }
         let payload = try JSONDecoder().decode(IPInfoPayload.self, from: data)
         guard !payload.ip.isEmpty else { throw EgressError.decode }
-        return Egress(ip: payload.ip, country: payload.country)
+        let coord = parseLoc(payload.loc)
+        return Egress(ip: payload.ip, country: payload.country, city: payload.city,
+                      latitude: coord?.0, longitude: coord?.1)
     }
 
     // MARK: - Via SOCKS5 (curl)
@@ -67,7 +85,9 @@ enum EgressInfoService {
                 )
                 let payload = try JSONDecoder().decode(IPInfoPayload.self, from: data)
                 guard !payload.ip.isEmpty else { throw EgressError.decode }
-                return Egress(ip: payload.ip, country: payload.country)
+                let coord = parseLoc(payload.loc)
+                return Egress(ip: payload.ip, country: payload.country, city: payload.city,
+                              latitude: coord?.0, longitude: coord?.1)
             } catch {
                 // Fallback for environments where curl+LibreSSL fails TLS over SOCKS.
                 let data = try runCurlJSON(
@@ -76,7 +96,8 @@ enum EgressInfoService {
                 )
                 let payload = try JSONDecoder().decode(IPApiPayload.self, from: data)
                 guard !payload.query.isEmpty else { throw EgressError.decode }
-                return Egress(ip: payload.query, country: payload.countryCode)
+                return Egress(ip: payload.query, country: payload.countryCode, city: payload.city,
+                              latitude: payload.lat, longitude: payload.lon)
             }
         }.value
     }

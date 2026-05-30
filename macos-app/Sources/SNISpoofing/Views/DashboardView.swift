@@ -9,17 +9,19 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
                 statusCard
                 meterCard
                 if let lan = lanIPv4 {
-                    HStack(alignment: .top, spacing: 14) {
+                    HStack(alignment: .top, spacing: 10) {
                         lanCard(lan).frame(maxWidth: .infinity, alignment: .top)
                         SystemProxyCard().frame(maxWidth: .infinity, alignment: .top)
                     }
                 } else {
                     SystemProxyCard()
                 }
+                ConnectionRouteCard()
+                EgressMapCard()
             }
             .padding(.bottom, 4)
         }
@@ -120,8 +122,8 @@ struct DashboardView: View {
     // MARK: - Compact bandwidth meter
 
     private var meterCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 12) {
+        Card(padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .lastTextBaseline) {
                     Text(app.status.isRunning ? "This session" : "Activity")
                         .font(.system(size: 12, weight: .semibold))
@@ -132,7 +134,7 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                HStack(alignment: .center, spacing: 18) {
+                HStack(alignment: .center, spacing: 14) {
                     speedColumn(
                         icon: "arrow.down",
                         title: "Down",
@@ -140,7 +142,7 @@ struct DashboardView: View {
                         total: app.sessionBytesDown,
                         tint: .blue
                     )
-                    Divider().frame(height: 36)
+                    Divider().frame(height: 26)
                     speedColumn(
                         icon: "arrow.up",
                         title: "Up",
@@ -148,7 +150,7 @@ struct DashboardView: View {
                         total: app.sessionBytesUp,
                         tint: .purple
                     )
-                    Divider().frame(height: 36)
+                    Divider().frame(height: 26)
                     totalColumn
                 }
                 ActivityPulseMeter(
@@ -167,10 +169,10 @@ struct DashboardView: View {
                 .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 1) {
                 Text(rate(speed))
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                 Text("\(title) · \(formatBytes(total))")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9.5))
                     .foregroundStyle(.secondary)
             }
         }
@@ -184,7 +186,7 @@ struct DashboardView: View {
                 .foregroundStyle(.mint)
             VStack(alignment: .leading, spacing: 1) {
                 Text(formatBytes(app.sessionBytesDown + app.sessionBytesUp))
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                 Text("Total")
                     .font(.system(size: 10))
@@ -202,27 +204,32 @@ struct DashboardView: View {
     // MARK: - LAN IP
 
     private func lanCard(_ ip: String) -> some View {
-        Card {
-            HStack(alignment: .center, spacing: 12) {
+        Card(height: 76, padding: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: "wifi.router")
-                    .font(.system(size: 17))
+                    .font(.system(size: 16))
                     .foregroundStyle(.orange)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 8) {
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
                         Text("LAN sharing")
                             .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                         StatusPill(text: bindsAllInterfaces ? "On" : "Local", tint: bindsAllInterfaces ? .green : .secondary)
+                        Spacer(minLength: 0)
                     }
-                    Text(verbatim: ip)
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .textSelection(.enabled)
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(verbatim: ip)
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        Spacer(minLength: 4)
                         EndpointChip(label: "SOCKS", value: "\(app.settings.listenPort)", tint: .orange)
                         EndpointChip(label: "HTTP", value: "\(app.settings.httpPort)", tint: .cyan)
                     }
                 }
-                Spacer(minLength: 0)
                 Button {
                     let pb = NSPasteboard.general
                     pb.clearContents()
@@ -237,7 +244,6 @@ struct DashboardView: View {
                 .buttonStyle(.borderless)
                 .help("Copy LAN endpoints")
             }
-            .frame(minHeight: 82, alignment: .center)
         }
     }
 
@@ -319,11 +325,13 @@ struct Card<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     var alignment: Alignment = .leading
     var maxHeight: CGFloat? = nil
+    var height: CGFloat? = nil
+    var padding: CGFloat = 16
     @ViewBuilder var content: () -> Content
     var body: some View {
         content()
-            .padding(16)
-            .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: alignment)
+            .padding(padding)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height ?? maxHeight, alignment: alignment)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(AppTheme.cardFill(for: colorScheme))
@@ -499,13 +507,13 @@ struct SystemProxyCard: View {
     @EnvironmentObject var app: AppState
 
     var body: some View {
-        Card {
-            HStack(alignment: .center, spacing: 14) {
+        Card(height: 76, padding: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: app.settings.connectionMode.systemImage)
-                    .font(.system(size: 17))
+                    .font(.system(size: 16))
                     .foregroundStyle(.cyan)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 10) {
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .center, spacing: 8) {
                         Text("Routing")
                             .font(.system(size: 12, weight: .semibold))
@@ -532,7 +540,6 @@ struct SystemProxyCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
             }
-            .frame(minHeight: 82, alignment: .center)
         }
     }
 
@@ -581,6 +588,8 @@ private struct EndpointChip: View {
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
         }
+        .lineLimit(1)
+        .fixedSize()
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
         .background(

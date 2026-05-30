@@ -50,6 +50,9 @@ final class AppState: ObservableObject {
 
     @Published var egressIP: String?
     @Published var egressCountry: String?
+    @Published var egressCity: String?
+    @Published var egressLat: Double?
+    @Published var egressLon: Double?
     @Published var egressLookupMessage: String?
 
     @Published var profilePingResults: [UUID: RealPingService.Result] = [:]
@@ -786,6 +789,9 @@ final class AppState: ObservableObject {
     private func clearEgress() {
         egressIP = nil
         egressCountry = nil
+        egressCity = nil
+        egressLat = nil
+        egressLon = nil
         egressLookupMessage = nil
     }
 
@@ -793,6 +799,9 @@ final class AppState: ObservableObject {
         egressLookupMessage = "Resolving egress…"
         egressIP = nil
         egressCountry = nil
+        egressCity = nil
+        egressLat = nil
+        egressLon = nil
         let host = settings.resolvedSocksHostForLocalClient
         let port = settings.listenPort
         Task { [weak self] in
@@ -817,6 +826,9 @@ final class AppState: ObservableObject {
                 guard status.isRunning else { return }
                 egressIP = r.ip
                 egressCountry = r.country
+                egressCity = r.city
+                egressLat = r.latitude
+                egressLon = r.longitude
                 egressLookupMessage = nil
                 return
             } catch {
