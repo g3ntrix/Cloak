@@ -63,9 +63,10 @@ struct BackgroundGradient: View {
 }
 
 /// Configures the window for a standard-height hidden-title bar (traffic lights
-/// float over the content, no extra drag strip). The same settings are reapplied
-/// on fullscreen transitions, where AppKit otherwise restores an opaque titlebar
-/// strip / separator line over the content.
+/// float over the content, no extra drag strip). Native fullscreen is disabled so
+/// the green button zooms (fills the screen in-place) instead of entering the
+/// separate-Space fullscreen mode, which forced an opaque titlebar/menu strip to
+/// slide over the content.
 struct WindowAccessor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -73,7 +74,7 @@ struct WindowAccessor: NSViewRepresentable {
         let v = NSView()
         DispatchQueue.main.async {
             guard let w = v.window else { return }
-            context.coordinator.configure(w)
+            context.coordinator.attach(w)
         }
         return v
     }
@@ -83,15 +84,15 @@ struct WindowAccessor: NSViewRepresentable {
     final class Coordinator {
         private weak var window: NSWindow?
 
-        func configure(_ w: NSWindow) {
+        func attach(_ w: NSWindow) {
             window = w
             apply()
-            let nc = NotificationCenter.default
-            for name in [NSWindow.didEnterFullScreenNotification,
-                         NSWindow.didExitFullScreenNotification] {
-                nc.addObserver(self, selector: #selector(reapply),
-                               name: name, object: w)
-            }
+            // SwiftUI re-adds `.fullScreenPrimary` after our initial setup, so the
+            // green button reverts to native fullscreen. Reassert on every key
+            // transition so the zoom ("+") behavior wins.
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(reapply),
+                name: NSWindow.didBecomeKeyNotification, object: w)
         }
 
         @objc private func reapply() { apply() }
@@ -103,6 +104,8 @@ struct WindowAccessor: NSViewRepresentable {
             w.titlebarSeparatorStyle = .none
             w.isMovableByWindowBackground = true
             w.styleMask.insert(.fullSizeContentView)
+            w.collectionBehavior.remove(.fullScreenPrimary)
+            w.collectionBehavior.insert(.fullScreenNone)
         }
 
         deinit { NotificationCenter.default.removeObserver(self) }
