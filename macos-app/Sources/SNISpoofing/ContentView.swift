@@ -83,19 +83,28 @@ struct WindowAccessor: NSViewRepresentable {
 
     final class Coordinator {
         private weak var window: NSWindow?
+        private var behaviorObservation: NSKeyValueObservation?
 
         func attach(_ w: NSWindow) {
             window = w
             apply()
-            // SwiftUI re-adds `.fullScreenPrimary` after our initial setup, so the
-            // green button reverts to native fullscreen. Reassert on every key
-            // transition so the zoom ("+") behavior wins.
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(reapply),
-                name: NSWindow.didBecomeKeyNotification, object: w)
+            // SwiftUI re-adds `.fullScreenPrimary` during later layout passes, so a
+            // one-shot fix is racy and the green button intermittently reverts to
+            // native fullscreen. Observe the property and strip it the moment it
+            // reappears, keeping the zoom ("+") behavior consistent.
+            behaviorObservation = w.observe(\.collectionBehavior, options: [.new]) { [weak self] win, _ in
+                self?.enforceNoFullScreen(win)
+            }
         }
 
-        @objc private func reapply() { apply() }
+        private func enforceNoFullScreen(_ w: NSWindow) {
+            guard w.collectionBehavior.contains(.fullScreenPrimary)
+                || !w.collectionBehavior.contains(.fullScreenNone) else { return }
+            var b = w.collectionBehavior
+            b.remove(.fullScreenPrimary)
+            b.insert(.fullScreenNone)
+            w.collectionBehavior = b
+        }
 
         private func apply() {
             guard let w = window else { return }
@@ -104,10 +113,9 @@ struct WindowAccessor: NSViewRepresentable {
             w.titlebarSeparatorStyle = .none
             w.isMovableByWindowBackground = true
             w.styleMask.insert(.fullSizeContentView)
-            w.collectionBehavior.remove(.fullScreenPrimary)
-            w.collectionBehavior.insert(.fullScreenNone)
+            enforceNoFullScreen(w)
         }
 
-        deinit { NotificationCenter.default.removeObserver(self) }
+        deinit { behaviorObservation?.invalidate() }
     }
 }

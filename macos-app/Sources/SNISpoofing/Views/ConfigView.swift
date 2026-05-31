@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
     @EnvironmentObject var app: AppState
@@ -369,21 +370,22 @@ struct SettingsView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            TextField("e.g. example.com, 192.168.1.1 or 10.0.0.0/8", text: $newDomain)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(AppTheme.controlFill(for: colorScheme))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(domainError == nil ? AppTheme.stroke(for: colorScheme) : Color.red.opacity(0.6))
-                        )
-                )
-                .onSubmit { addCustomDomain() }
-                .onChange(of: newDomain) { _ in domainError = nil }
+            PlainTextField(
+                text: $newDomain,
+                placeholder: "e.g. example.com, 192.168.1.1 or 10.0.0.0/8",
+                onSubmit: { addCustomDomain() }
+            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(AppTheme.controlFill(for: colorScheme))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(domainError == nil ? AppTheme.stroke(for: colorScheme) : Color.red.opacity(0.6))
+                    )
+            )
+            .onChange(of: newDomain) { _ in domainError = nil }
 
             if let domainError {
                 Text(domainError)
@@ -647,6 +649,70 @@ struct FlowLayout: Layout {
             subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+/// Plain single-line text field backed by `NSTextField`. SwiftUI's `TextField`
+/// flags itself as AutoFill-eligible on macOS, which flashes the system
+/// suggestion popover on first focus. Using a raw field with `contentType = nil`
+/// and no completion candidates avoids that flicker.
+struct PlainTextField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        field.placeholderString = placeholder
+        field.usesSingleLineMode = true
+        field.lineBreakMode = .byClipping
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.allowsEditingTextAttributes = false
+        field.contentType = nil
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: PlainTextField
+        init(_ parent: PlainTextField) { self.parent = parent }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView,
+                     doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                parent.onSubmit()
+                return true
+            }
+            return false
+        }
+
+        // Returning no candidates suppresses the automatic-completion popover.
+        func control(_ control: NSControl, textView: NSTextView,
+                     completions words: [String], forPartialWordRange charRange: NSRange,
+                     indexOfSelectedItem index: UnsafeMutablePointer<Int>) -> [String] {
+            []
         }
     }
 }
