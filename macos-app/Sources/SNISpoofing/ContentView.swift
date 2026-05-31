@@ -63,19 +63,48 @@ struct BackgroundGradient: View {
 }
 
 /// Configures the window for a standard-height hidden-title bar (traffic lights
-/// float over the content, no extra drag strip).
+/// float over the content, no extra drag strip). The same settings are reapplied
+/// on fullscreen transitions, where AppKit otherwise restores an opaque titlebar
+/// strip / separator line over the content.
 struct WindowAccessor: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
         DispatchQueue.main.async {
-            if let w = v.window {
-                w.titlebarAppearsTransparent = true
-                w.titleVisibility = .hidden
-                w.isMovableByWindowBackground = true
-                w.styleMask.insert(.fullSizeContentView)
-            }
+            guard let w = v.window else { return }
+            context.coordinator.configure(w)
         }
         return v
     }
+
     func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class Coordinator {
+        private weak var window: NSWindow?
+
+        func configure(_ w: NSWindow) {
+            window = w
+            apply()
+            let nc = NotificationCenter.default
+            for name in [NSWindow.didEnterFullScreenNotification,
+                         NSWindow.didExitFullScreenNotification] {
+                nc.addObserver(self, selector: #selector(reapply),
+                               name: name, object: w)
+            }
+        }
+
+        @objc private func reapply() { apply() }
+
+        private func apply() {
+            guard let w = window else { return }
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.titlebarSeparatorStyle = .none
+            w.isMovableByWindowBackground = true
+            w.styleMask.insert(.fullSizeContentView)
+        }
+
+        deinit { NotificationCenter.default.removeObserver(self) }
+    }
 }

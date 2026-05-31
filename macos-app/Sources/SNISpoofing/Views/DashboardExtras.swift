@@ -75,8 +75,11 @@ struct ConnectionRouteCard: View {
 
     // MARK: - Spawning (single shared clock)
 
-    /// Whether pulses should be generated: connected *and* the window is focused.
-    private var animating: Bool { active && controlActive != .inactive }
+    /// Whether pulses should be generated: connected, window focused, and the
+    /// user hasn't opted into reduced animations.
+    private var animating: Bool {
+        active && controlActive != .inactive && !app.settings.reduceAnimations
+    }
 
     private func tick(now: TimeInterval) {
         guard animating else {
@@ -238,8 +241,10 @@ struct RouteFlowConnector: View {
 // MARK: - Egress map
 
 private struct EgressPoint: Identifiable {
-    let id = UUID()
     let coordinate: CLLocationCoordinate2D
+    /// Stable across re-renders so MapKit keeps the same annotation (no flicker);
+    /// only changes when the egress location actually moves.
+    var id: String { "\(coordinate.latitude),\(coordinate.longitude)" }
 }
 
 /// A small map that drops a pulsing pin at the egress IP's location.
@@ -257,7 +262,7 @@ struct EgressMapCard: View {
     }
 
     var body: some View {
-        Card(padding: 12) {
+        Card(maxHeight: .infinity, padding: 12) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Label("Exit location", systemImage: "mappin.and.ellipse")
@@ -275,14 +280,16 @@ struct EgressMapCard: View {
                         Map(coordinateRegion: $region,
                             interactionModes: [],
                             annotationItems: [EgressPoint(coordinate: coord)]) { point in
-                            MapAnnotation(coordinate: point.coordinate) { MapPulseDot() }
+                            MapAnnotation(coordinate: point.coordinate) {
+                                MapPulseDot(animated: !app.settings.reduceAnimations)
+                            }
                         }
                         .allowsHitTesting(false)
                     } else {
                         placeholder
                     }
                 }
-                .frame(height: 150)
+                .frame(maxWidth: .infinity, minHeight: 150, maxHeight: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -326,7 +333,7 @@ struct EgressMapCard: View {
             center: coord,
             span: MKCoordinateSpan(latitudeDelta: 14, longitudeDelta: 14)
         )
-        if animated {
+        if animated, !app.settings.reduceAnimations {
             withAnimation(.easeInOut(duration: 0.6)) { region = target }
         } else {
             region = target
@@ -334,24 +341,28 @@ struct EgressMapCard: View {
     }
 }
 
-/// A green dot with a repeating pulse halo for the map annotation.
+/// A green dot for the map annotation. When `animated`, a halo pulses outward;
+/// otherwise just the static dot is shown to avoid the repeating animation.
 private struct MapPulseDot: View {
+    var animated: Bool
     @State private var pulse = false
     var body: some View {
         ZStack {
-            Circle()
-                .fill(Color.green.opacity(0.25))
-                .frame(width: 34, height: 34)
-                .scaleEffect(pulse ? 1.3 : 0.7)
-                .opacity(pulse ? 0 : 0.8)
+            if animated {
+                Circle()
+                    .fill(Color.green.opacity(0.25))
+                    .frame(width: 34, height: 34)
+                    .scaleEffect(pulse ? 1.3 : 0.7)
+                    .opacity(pulse ? 0 : 0.8)
+                    .animation(.easeOut(duration: 1.6).repeatForever(autoreverses: false), value: pulse)
+            }
             Circle()
                 .fill(Color.green)
                 .frame(width: 12, height: 12)
                 .shadow(color: .green.opacity(0.7), radius: 5)
                 .overlay(Circle().stroke(.white, lineWidth: 1.5))
         }
-        .animation(.easeOut(duration: 1.6).repeatForever(autoreverses: false), value: pulse)
-        .onAppear { pulse = true }
+        .onAppear { if animated { pulse = true } }
     }
 }
 

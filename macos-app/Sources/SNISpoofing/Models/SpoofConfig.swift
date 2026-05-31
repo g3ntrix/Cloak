@@ -29,6 +29,10 @@ struct AppSettings: Codable, Equatable {
     /// Light/dark appearance override. `.system` follows macOS.
     var appearanceMode: AppearanceMode = .system
 
+    /// When enabled, dashboard motion (route packet dots, map pin pulse) is
+    /// suppressed to reduce CPU/GPU usage. Static state is still shown.
+    var reduceAnimations: Bool = false
+
     /// When enabled, domains matching `bypassGeosites` / `bypassDomains` skip the
     /// proxy and dial out directly (Xray `direct` outbound).
     var bypassEnabled: Bool = false
@@ -86,6 +90,7 @@ struct AppSettings: Codable, Equatable {
         logLevel: LogLevel = .warn,
         logsEnabled: Bool = false,
         appearanceMode: AppearanceMode = .system,
+        reduceAnimations: Bool = false,
         bypassEnabled: Bool = false,
         bypassGeosites: [String] = [],
         bypassDomains: [String] = []
@@ -100,6 +105,7 @@ struct AppSettings: Codable, Equatable {
         self.logLevel = logLevel
         self.logsEnabled = logsEnabled
         self.appearanceMode = appearanceMode
+        self.reduceAnimations = reduceAnimations
         self.bypassEnabled = bypassEnabled
         self.bypassGeosites = bypassGeosites
         self.bypassDomains = bypassDomains
@@ -119,6 +125,7 @@ struct AppSettings: Codable, Equatable {
         case pythonProjectPath, listenHost, listenPort, httpPort
         case useSystemProxy, connectionMode
         case activeProfileID, logLevel, logsEnabled, appearanceMode
+        case reduceAnimations
         case bypassEnabled, bypassGeosites, bypassDomains
     }
 
@@ -134,6 +141,7 @@ struct AppSettings: Codable, Equatable {
         logLevel = try c.decodeIfPresent(LogLevel.self, forKey: .logLevel) ?? .warn
         logsEnabled = try c.decodeIfPresent(Bool.self, forKey: .logsEnabled) ?? false
         appearanceMode = try c.decodeIfPresent(AppearanceMode.self, forKey: .appearanceMode) ?? .system
+        reduceAnimations = try c.decodeIfPresent(Bool.self, forKey: .reduceAnimations) ?? false
         bypassEnabled = try c.decodeIfPresent(Bool.self, forKey: .bypassEnabled) ?? false
         bypassGeosites = try c.decodeIfPresent([String].self, forKey: .bypassGeosites) ?? []
         bypassDomains = try c.decodeIfPresent([String].self, forKey: .bypassDomains) ?? []

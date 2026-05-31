@@ -8,24 +8,29 @@ struct DashboardView: View {
     @State private var copiedLan = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                statusCard
-                meterCard
-                if let lan = lanIPv4 {
-                    HStack(alignment: .top, spacing: 10) {
-                        lanCard(lan).frame(maxWidth: .infinity, alignment: .top)
-                        SystemProxyCard().frame(maxWidth: .infinity, alignment: .top)
+        GeometryReader { geo in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    statusCard
+                    meterCard
+                    if let lan = lanIPv4 {
+                        HStack(alignment: .top, spacing: 10) {
+                            lanCard(lan).frame(maxWidth: .infinity, alignment: .top)
+                            SystemProxyCard().frame(maxWidth: .infinity, alignment: .top)
+                        }
+                    } else {
+                        SystemProxyCard()
                     }
-                } else {
-                    SystemProxyCard()
+                    ConnectionRouteCard()
+                    EgressMapCard()
                 }
-                ConnectionRouteCard()
-                EgressMapCard()
+                .padding(.bottom, 4)
+                // Fill at least the viewport so the greedy map card absorbs any
+                // extra height instead of leaving empty space below.
+                .frame(minHeight: geo.size.height, alignment: .top)
             }
-            .padding(.bottom, 4)
+            .scrollIndicators(.hidden)
         }
-        .scrollIndicators(.hidden)
         .onAppear {
             startTimer()
             refreshLanIP()
@@ -39,7 +44,7 @@ struct DashboardView: View {
     private var statusCard: some View {
         Card {
             HStack(alignment: .center, spacing: 14) {
-                StatusOrb(status: app.status)
+                StatusOrb(status: app.status, reduceMotion: app.settings.reduceAnimations)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(app.status.label)
                         .font(.system(size: 19, weight: .semibold))
@@ -345,19 +350,21 @@ struct Card<Content: View>: View {
 
 struct StatusOrb: View {
     let status: AppState.Status
+    var reduceMotion: Bool = false
     @State private var pulse = false
+    private var animatePulse: Bool { status.isRunning && !reduceMotion }
     var body: some View {
         ZStack {
             Circle().fill(color.opacity(0.22)).frame(width: 46, height: 46)
-                .scaleEffect(pulse ? 1.15 : 0.9)
+                .scaleEffect(animatePulse && pulse ? 1.15 : 0.9)
                 .opacity(status.isRunning ? 1 : 0.5)
-                .animation(status.isRunning
+                .animation(animatePulse
                            ? .easeInOut(duration: 1.4).repeatForever(autoreverses: true)
                            : .default, value: pulse)
             Circle().fill(color).frame(width: 15, height: 15)
                 .shadow(color: color.opacity(0.6), radius: 8)
         }
-        .onAppear { pulse = true }
+        .onAppear { if animatePulse { pulse = true } }
     }
     private var color: Color {
         switch status {

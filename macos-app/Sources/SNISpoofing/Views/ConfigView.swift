@@ -53,8 +53,27 @@ struct SettingsView: View {
                     .font(.system(size: 17))
                     .foregroundStyle(.indigo)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Appearance")
-                        .font(.system(size: 13, weight: .semibold))
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Appearance")
+                            .font(.system(size: 13, weight: .semibold))
+                        Spacer(minLength: 16)
+                        HStack(spacing: 7) {
+                            Text("Reduce animations")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Toggle("", isOn: Binding(
+                                get: { app.settings.reduceAnimations },
+                                set: {
+                                    app.settings.reduceAnimations = $0
+                                    app.saveSettings()
+                                }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                        }
+                        .help("Stops the moving dots and map pulse to save power.")
+                    }
                     AppearancePicker(mode: Binding(
                         get: { app.settings.appearanceMode },
                         set: {
