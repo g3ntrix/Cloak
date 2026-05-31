@@ -327,12 +327,30 @@ final class AppState: ObservableObject {
             // system proxy onto it — otherwise the first wave of system
             // traffic races the listener coming up and looks like a failure.
             try await Task.sleep(nanoseconds: 400_000_000)
-            let health = await RealPingService.pingViaSocks(proxyHost: settings.resolvedSocksHostForLocalClient, proxyPort: settings.listenPort, timeout: 8)
-            guard health.millis != nil else {
+
+            // Wait for xray's local SOCKS port to start accepting connections
+            // before flipping the system proxy onto it. We intentionally do NOT
+            // gate the connection on an end-to-end HTTP probe: slow paths (e.g.
+            // SNI-spoofing through Cloudflare) can take seconds for the first
+            // request, and a strict pre-flight probe made healthy-but-slow
+            // profiles fail to connect (regressed in 1.1.5). Live reachability is
+            // shown by the dashboard ping instead.
+            let socksProbeHost = settings.resolvedSocksHostForLocalClient
+            let socksProbePort = UInt16(clamping: settings.listenPort)
+            var xrayPortReady = false
+            for _ in 0 ..< 25 { // ~5s max
+                if Task.isCancelled { break }
+                if await RealPingService.ping(host: socksProbeHost, port: socksProbePort, timeout: 1).millis != nil {
+                    xrayPortReady = true
+                    break
+                }
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+            guard xrayPortReady else {
                 throw NSError(
                     domain: "SNISpoofing",
                     code: 41,
-                    userInfo: [NSLocalizedDescriptionKey: "This profile did not complete a test request. Try another profile or update the Cloudflare settings."]
+                    userInfo: [NSLocalizedDescriptionKey: "Xray's local proxy port didn't come up. Open Logs for details."]
                 )
             }
 

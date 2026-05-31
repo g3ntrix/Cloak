@@ -38,11 +38,20 @@ enum RealPingService {
     }
 
     private static func curlTimingThroughSocks(socks: String, timeout: TimeInterval) -> Result {
-        let perProbeTimeout = max(2, min(4, Int((timeout / Double(socksProbeURLs.count)).rounded(.up))))
+        // Give the first probe most of the budget — a slow SNI-spoofing path
+        // through Cloudflare can take several seconds for the first request, so
+        // the old 2-4s per-probe cap reported healthy-but-slow profiles as dead.
+        // We bound the *total* time with an overall deadline so a truly dead
+        // config still fails promptly after cycling the fallback endpoints.
+        let perProbeCap = max(5, Int(timeout.rounded(.up)))
+        let deadline = Date().addingTimeInterval(timeout)
         var last = Result(millis: nil, error: "failed")
 
         for url in socksProbeURLs {
-            let result = curlTimingThroughSocks(socks: socks, url: url, timeoutSeconds: perProbeTimeout)
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining < 1 { break }
+            let slice = max(2, min(perProbeCap, Int(remaining.rounded(.up))))
+            let result = curlTimingThroughSocks(socks: socks, url: url, timeoutSeconds: slice)
             if result.millis != nil { return result }
             last = result
         }
