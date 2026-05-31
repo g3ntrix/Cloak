@@ -23,8 +23,8 @@
       <img src="macos-app/screenshot/settings.png" alt="Cloak settings" width="100%" />
     </td>
     <td align="center">
-      <strong>Light mode</strong><br />
-      <img src="macos-app/screenshot/light-mode.png" alt="Cloak light mode" width="100%" />
+      <strong>نوار منو</strong><br />
+      <img src="macos-app/screenshot/menubar.png" alt="Cloak menu bar" width="100%" />
     </td>
   </tr>
 </table>
