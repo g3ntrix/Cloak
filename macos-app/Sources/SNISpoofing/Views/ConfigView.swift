@@ -346,11 +346,11 @@ struct SettingsView: View {
 
     private var customDomainsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Custom domains")
+            Text("Custom domains & IPs")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            TextField("Add a domain, e.g. example.com", text: $newDomain)
+            TextField("e.g. example.com, 192.168.1.1 or 10.0.0.0/8", text: $newDomain)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .padding(.horizontal, 10)
@@ -425,14 +425,16 @@ struct SettingsView: View {
         app.saveSettings()
     }
 
-    /// Accepts an Xray rule prefix (`domain:`/`geosite:`/`full:`/`regexp:`/`keyword:`)
-    /// with a non-empty value, or a plain hostname with at least one dot and a
-    /// 2+ letter TLD. Rejects bare tokens like "g".
+    /// Accepts an Xray rule prefix (`domain:`/`geosite:`/`geoip:`/`full:`/`regexp:`/
+    /// `keyword:`/`ext:`) with a non-empty value, a CIDR or literal IP address, or a
+    /// plain hostname with at least one dot and a 2+ letter TLD. Rejects bare
+    /// tokens like "g".
     private func isValidBypassEntry(_ entry: String) -> Bool {
-        let prefixes = ["domain:", "full:", "geosite:", "regexp:", "keyword:", "ext:"]
+        let prefixes = ["domain:", "full:", "geosite:", "geoip:", "regexp:", "keyword:", "ext:"]
         for prefix in prefixes where entry.lowercased().hasPrefix(prefix) {
             return entry.count > prefix.count
         }
+        if XrayOutboundBuilder.isIPRule(entry) { return true }
         let pattern = "^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$"
         return entry.range(of: pattern, options: .regularExpression) != nil
     }
@@ -560,8 +562,13 @@ struct DomainPill: View {
     let onRemove: () -> Void
     @State private var hoveringX = false
 
+    private var isIP: Bool { XrayOutboundBuilder.isIPRule(domain) }
+
     var body: some View {
         HStack(spacing: 5) {
+            Image(systemName: isIP ? "network" : "globe")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(isIP ? Color.teal : Color.secondary)
             Text(domain)
                 .font(.system(size: 11, design: .monospaced))
                 .lineLimit(1)

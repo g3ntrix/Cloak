@@ -119,13 +119,20 @@ enum XrayOutboundBuilder {
         let inbounds: [[String: Any]] = [socksInbound, httpInbound]
 
         var rules: [[String: Any]] = []
-        // Bypass rules win over the catch-all: matching domains dial out directly.
+        // Bypass rules win over the catch-all: matching traffic dials out directly.
         if settings.bypassEnabled {
-            let bypassDomains = bypassDomainList(settings)
-            if !bypassDomains.isEmpty {
+            let bypass = bypassLists(settings)
+            if !bypass.domains.isEmpty {
                 rules.append([
                     "type": "field",
-                    "domain": bypassDomains,
+                    "domain": bypass.domains,
+                    "outboundTag": "direct",
+                ])
+            }
+            if !bypass.ips.isEmpty {
+                rules.append([
+                    "type": "field",
+                    "ip": bypass.ips,
                     "outboundTag": "direct",
                 ])
             }
@@ -158,23 +165,62 @@ enum XrayOutboundBuilder {
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
     }
 
-    /// Combines selected geosite categories and custom entries into a deduped
-    /// list for an Xray routing `domain` array.
-    static func bypassDomainList(_ settings: AppSettings) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        // Only emit categories that exist in the bundled geosite.dat — an unknown
-        // `geosite:<id>` tag makes Xray refuse to start.
-        let geosite = settings.bypassGeosites
-            .filter { GeositeCatalog.category(for: $0) != nil }
-            .map { "geosite:\($0)" }
-        let custom = settings.bypassDomains
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        for entry in geosite + custom where seen.insert(entry).inserted {
-            result.append(entry)
+    /// Resolves selected categories and custom entries into deduped lists for the
+    /// Xray routing `domain` and `ip` fields. Domain rules cover `geosite:`/host
+    /// matches; IP rules cover `geoip:`/CIDR/literal-IP matches (e.g. bypassing
+    /// `geoip:private` so the router and other LAN devices stay reachable).
+    static func bypassLists(_ settings: AppSettings) -> (domains: [String], ips: [String]) {
+        var domainSeen = Set<String>()
+        var ipSeen = Set<String>()
+        var domains: [String] = []
+        var ips: [String] = []
+
+        func addDomain(_ v: String) { if domainSeen.insert(v).inserted { domains.append(v) } }
+        func addIP(_ v: String) { if ipSeen.insert(v).inserted { ips.append(v) } }
+
+        // Curated categories. Only known catalog ids are emitted — an unknown tag
+        // makes Xray refuse to start.
+        for id in settings.bypassGeosites {
+            guard let category = GeositeCatalog.category(for: id) else { continue }
+            for tag in category.tags {
+                switch tag.kind {
+                case .geosite: addDomain(tag.value)
+                case .geoip: addIP(tag.value)
+                }
+            }
         }
-        return result
+
+        // Custom entries: IP-shaped ones (geoip:, CIDR, literal IP) go to the ip
+        // field, everything else is treated as a domain rule.
+        for raw in settings.bypassDomains {
+            let entry = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !entry.isEmpty else { continue }
+            if isIPRule(entry) { addIP(entry) } else { addDomain(entry) }
+        }
+
+        return (domains, ips)
+    }
+
+    /// True when an entry belongs in the routing `ip` field rather than `domain`:
+    /// a `geoip:` tag, a CIDR block, or a literal IPv4/IPv6 address.
+    static func isIPRule(_ entry: String) -> Bool {
+        if entry.lowercased().hasPrefix("geoip:") { return true }
+        // CIDR: literal IP followed by a numeric prefix length.
+        if let slash = entry.firstIndex(of: "/") {
+            let host = String(entry[entry.startIndex ..< slash])
+            let lenPart = entry[entry.index(after: slash)...]
+            guard !lenPart.isEmpty, lenPart.allSatisfy(\.isNumber) else { return false }
+            return isLiteralIP(host)
+        }
+        return isLiteralIP(entry)
+    }
+
+    private static func isLiteralIP(_ s: String) -> Bool {
+        var v4 = in_addr()
+        if s.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 { return true }
+        var v6 = in6_addr()
+        if s.withCString({ inet_pton(AF_INET6, $0, &v6) }) == 1 { return true }
+        return false
     }
 
     private static func xrayLogLevel(_ l: AppSettings.LogLevel) -> String {

@@ -3,12 +3,36 @@ import MapKit
 
 // MARK: - Connection route diagram
 
+/// One dot traveling along a link. `link` indexes which connector it belongs to
+/// (0 = Mac→Cloudflare, 1 = Cloudflare→proxy, 2 = proxy→Internet).
+struct RoutePacket: Identifiable {
+    let id = UUID()
+    let link: Int
+    let birth: TimeInterval
+    let life: TimeInterval     // seconds to cross the link
+    let reverse: Bool          // true = right→left (download)
+    let size: CGFloat
+}
+
 /// Visualizes the tunnel path: This Mac → Cloudflare edge (Fake SNI) → proxy
 /// server → Internet (egress). Dots flow along the links while connected.
+///
+/// A single 10 Hz clock owned here schedules pulses for all three links; each
+/// connector only runs a per-frame `TimelineView` while it actually holds a
+/// packet, so idle gaps (and a backgrounded window) cost no continuous redraw.
 struct ConnectionRouteCard: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.controlActiveState) private var controlActive
 
     private var active: Bool { app.status.isRunning }
+
+    @State private var packets: [RoutePacket] = []
+    @State private var lastSpawn: [TimeInterval] = [0, 0, 0]
+    @State private var gap: [TimeInterval] = [0.6, 0.6, 0.6]
+
+    private static let linkTints: [Color] = [.blue, .indigo, .mint]
+
+    private let spawnClock = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Card(padding: 12) {
@@ -28,18 +52,69 @@ struct ConnectionRouteCard: View {
                 }
                 HStack(alignment: .top, spacing: 4) {
                     routeNode(icon: "laptopcomputer", primary: "This Mac", secondary: "Origin", tint: .secondary)
-                    RouteFlowConnector(active: active, tint: .blue, intensity: intensity, downRatio: downRatio)
+                    connector(0)
                     routeNode(icon: "cloud.fill", primary: "Cloudflare",
                               secondary: app.listenerProject.FAKE_SNI, tint: .orange)
-                    RouteFlowConnector(active: active, tint: .indigo, intensity: intensity, downRatio: downRatio)
+                    connector(1)
                     routeNode(icon: "server.rack", primary: app.activeProfile?.name ?? "Server",
                               secondary: "Proxy node", tint: .purple)
-                    RouteFlowConnector(active: active, tint: .mint, intensity: intensity, downRatio: downRatio)
+                    connector(2)
                     routeNode(icon: "globe", primary: internetPrimary,
                               secondary: app.egressIP ?? "—", tint: .mint)
                 }
             }
         }
+        .onReceive(spawnClock) { date in tick(now: date.timeIntervalSinceReferenceDate) }
+        .onChange(of: active) { if !$0 { packets.removeAll() } }
+    }
+
+    private func connector(_ link: Int) -> some View {
+        RouteFlowConnector(tint: Self.linkTints[link],
+                           packets: packets.filter { $0.link == link })
+    }
+
+    // MARK: - Spawning (single shared clock)
+
+    /// Whether pulses should be generated: connected *and* the window is focused.
+    private var animating: Bool { active && controlActive != .inactive }
+
+    private func tick(now: TimeInterval) {
+        guard animating else {
+            if !packets.isEmpty { packets.removeAll() }
+            return
+        }
+        var next = packets.filter { now - $0.birth <= $0.life }
+        var changed = next.count != packets.count
+        for link in 0 ..< 3 {
+            if lastSpawn[link] == 0 { lastSpawn[link] = now; gap[link] = nextGap() }
+            if now - lastSpawn[link] >= gap[link] {
+                next.append(makePacket(link: link, now: now))
+                lastSpawn[link] = now
+                gap[link] = nextGap()
+                changed = true
+            }
+        }
+        // Only touch @State when something actually changed, so idle gaps don't
+        // trigger 10×/s re-renders.
+        if changed { packets = next }
+    }
+
+    private func makePacket(link: Int, now: TimeInterval) -> RoutePacket {
+        let base = 1.7 - intensity * 1.1                 // ~1.7s idle → ~0.6s busy
+        let life = base * Double.random(in: 0.82 ... 1.18)
+        let reverse = Double.random(in: 0 ... 1) < downRatio
+        let size = CGFloat(Double.random(in: 4.0 ... 5.5))
+        return RoutePacket(link: link, birth: now, life: life, reverse: reverse, size: size)
+    }
+
+    /// Time until the next packet on a link — short under load, a slow heartbeat when idle.
+    private func nextGap() -> TimeInterval {
+        if intensity <= 0 {
+            return Double.random(in: 2.4 ... 4.0)        // idle heartbeat
+        }
+        let lo = 0.75 - intensity * 0.47                 // busy → ~0.28–0.7s
+        let hi = 1.8 - intensity * 1.1                   // light → ~0.8–1.8s
+        return Double.random(in: lo ... max(lo + 0.05, hi))
     }
 
     /// 0 (idle) … 1 (heavy traffic) on a log scale — drives pulse cadence.
@@ -88,89 +163,30 @@ struct ConnectionRouteCard: View {
     }
 }
 
-/// A dashed link along which discrete "packets" travel. Instead of a constant
-/// stream, single dots are emitted at irregular intervals — frequently under
-/// heavy traffic, and as an occasional heartbeat when idle. Each packet eases
-/// across the link and fades in/out, so motion feels organic rather than
-/// mechanical. Direction is biased by `downRatio` (download flows right→left
-/// back toward the Mac; upload flows left→right).
+/// A dashed link that renders the packets handed to it by `ConnectionRouteCard`.
+/// It owns no timer: when there are no packets it draws a static track, and it
+/// only spins up a per-frame `TimelineView` while packets are actually in
+/// flight. Each packet eases across the link and fades in/out, with direction
+/// already baked in (download flows right→left back toward the Mac).
 struct RouteFlowConnector: View {
-    var active: Bool
     var tint: Color
-    /// 0 (idle) … 1 (heavy) — controls how often packets spawn and how fast they move.
-    var intensity: Double
-    /// Share of traffic that is download (0…1) — biases packet direction.
-    var downRatio: Double
-
-    private struct Packet: Identifiable {
-        let id = UUID()
-        let birth: TimeInterval
-        let life: TimeInterval     // seconds to cross the link
-        let reverse: Bool          // true = right→left (download)
-        let size: CGFloat
-    }
-
-    @State private var packets: [Packet] = []
-    @State private var lastSpawn: TimeInterval = 0
-    @State private var gap: TimeInterval = 0.6
-
-    // ~30 Hz scheduler that decides when to emit the next packet.
-    private let ticker = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
+    var packets: [RoutePacket]
 
     var body: some View {
-        TimelineView(.animation) { context in
-            Canvas { gc, size in
-                drawTrack(gc, size)
-                guard active else { return }
-                let now = context.date.timeIntervalSinceReferenceDate
-                render(gc, size, now: now)
+        Group {
+            if packets.isEmpty {
+                Canvas { gc, size in drawTrack(gc, size) }
+            } else {
+                TimelineView(.animation) { context in
+                    Canvas { gc, size in
+                        drawTrack(gc, size)
+                        render(gc, size, now: context.date.timeIntervalSinceReferenceDate)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity)
         .frame(height: 30)
-        .onReceive(ticker) { date in
-            guard active else {
-                if !packets.isEmpty { packets.removeAll() }
-                return
-            }
-            spawnTick(now: date.timeIntervalSinceReferenceDate)
-        }
-        .onChange(of: active) { isActive in
-            if !isActive { packets.removeAll() }
-        }
-    }
-
-    // MARK: - Spawning
-
-    private func spawnTick(now: TimeInterval) {
-        // Drop packets that have completed their life + fade.
-        packets.removeAll { now - $0.birth > $0.life }
-        if lastSpawn == 0 { lastSpawn = now; gap = nextGap() }
-        if now - lastSpawn >= gap {
-            packets.append(makePacket(now))
-            lastSpawn = now
-            gap = nextGap()
-        }
-    }
-
-    private func makePacket(_ now: TimeInterval) -> Packet {
-        // Faster crossings when busy, slower drifts when calm.
-        let base = 1.7 - intensity * 1.1                 // ~1.7s idle → ~0.6s busy
-        let life = base * Double.random(in: 0.82 ... 1.18)
-        let reverse = Double.random(in: 0 ... 1) < downRatio
-        let size = CGFloat(Double.random(in: 4.0 ... 5.5))
-        return Packet(birth: now, life: life, reverse: reverse, size: size)
-    }
-
-    /// Time until the next packet — short under load, a slow heartbeat when idle.
-    private func nextGap() -> TimeInterval {
-        if intensity <= 0 {
-            return Double.random(in: 2.4 ... 4.0)        // idle heartbeat
-        }
-        // Busy → ~0.28–0.7s, light → ~0.8–1.8s.
-        let lo = 0.75 - intensity * 0.47
-        let hi = 1.8 - intensity * 1.1
-        return Double.random(in: lo ... max(lo + 0.05, hi))
     }
 
     // MARK: - Rendering
