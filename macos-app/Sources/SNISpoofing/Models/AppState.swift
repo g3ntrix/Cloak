@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 @MainActor
 final class AppState: ObservableObject {
@@ -58,11 +59,13 @@ final class AppState: ObservableObject {
     @Published var profilePingResults: [UUID: RealPingService.Result] = [:]
     @Published var profilePingingIDs: Set<UUID> = []
     @Published var isPingBatchRunning = false
+    @Published var updateState: AppUpdateState = .idle
 
     private let store = ConfigStore()
     private let python = PythonListener()
     private let xray = XrayCoreManager()
     private let packetTunnel = PacketTunnelManager()
+    private let updater = AppUpdateService.shared
     /// Tracks whether we flipped the system SOCKS proxy on (must be flipped back off on stop).
     private var systemProxyActive = false
     /// Tracks whether we started the NetworkExtension packet tunnel.
@@ -87,6 +90,11 @@ final class AppState: ObservableObject {
         }
         xray.onLog = { [weak self] line in
             Task { @MainActor in self?.appendLog(line, prefix: "") }
+        }
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await self?.checkForUpdates(silent: true)
         }
     }
 
@@ -150,6 +158,51 @@ final class AppState: ObservableObject {
     func saveSettings() { store.saveSettings(settings) }
     func saveProfiles() { store.saveProfiles(profiles) }
     func saveListenerProject() { store.saveListenerProjectConfig(listenerProject) }
+
+    var currentAppVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    }
+
+    func checkForUpdates(silent: Bool = false) async {
+        if case .checking = updateState { return }
+        if !silent { updateState = .checking }
+        do {
+            let release = try await updater.latestRelease()
+            if updater.isNewer(release.version, than: currentAppVersion) {
+                updateState = .available(release)
+            } else if !silent {
+                updateState = .upToDate(currentAppVersion)
+            }
+        } catch {
+            if !silent {
+                updateState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func downloadAvailableUpdate() async {
+        guard case .available(let release) = updateState else { return }
+        updateState = .downloading(release, 0)
+        do {
+            let fileURL = try await updater.downloadDMG(for: release) { [weak self] progress in
+                Task { @MainActor in
+                    self?.updateState = .downloading(release, progress)
+                }
+            }
+            updateState = .downloaded(fileURL)
+            NSWorkspace.shared.open(fileURL)
+        } catch is CancellationError {
+            updateState = .available(release)
+        } catch {
+            updateState = .failed(error.localizedDescription)
+        }
+    }
+
+    func cancelUpdateDownload() {
+        guard case .downloading(let release, _) = updateState else { return }
+        updater.cancelDownload()
+        updateState = .available(release)
+    }
 
     var activeProfile: Profile? {
         guard let id = settings.activeProfileID else { return nil }

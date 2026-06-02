@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 
 struct AboutView: View {
+    @EnvironmentObject var app: AppState
+
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
@@ -10,6 +12,7 @@ struct AboutView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 hero
+                updateCard
                 projectCard
                 authorCard
                 donateCard
@@ -17,6 +20,105 @@ struct AboutView: View {
             .padding(.bottom, 4)
         }
         .scrollIndicators(.hidden)
+    }
+
+    private var updateCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Label("Updates", systemImage: "arrow.down.app.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    updateAction
+                }
+
+                updateContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var updateAction: some View {
+        switch app.updateState {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+        case .downloading:
+            Button("Cancel") {
+                app.cancelUpdateDownload()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        case .available:
+            Button("Download") {
+                Task { await app.downloadAvailableUpdate() }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        case .downloaded(let url):
+            Button("Open DMG") {
+                NSWorkspace.shared.open(url)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        default:
+            Button("Check") {
+                Task { await app.checkForUpdates() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private var updateContent: some View {
+        switch app.updateState {
+        case .idle:
+            Text("Current version \(appVersion).")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        case .checking:
+            Text("Looking for updates...")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        case .upToDate(let version):
+            Text("You're up to date on \(version).")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        case .available(let release):
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Version \(release.version) is available")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Installed \(appVersion) · Download \(formatMegabytes(release.assetSize))")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                Link("View release notes", destination: release.htmlURL)
+                    .font(.system(size: 11, weight: .medium))
+            }
+        case .downloading(let release, let progress):
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text("Downloading \(release.assetName)")
+                        .font(.system(size: 11, weight: .medium))
+                    Spacer()
+                    Text("\(Int(progress * 100))%")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            }
+        case .downloaded(let url):
+            Text("Downloaded to \(url.lastPathComponent). Open the DMG and replace Cloak.app to finish updating.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .failed(let message):
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: - Hero
@@ -101,6 +203,10 @@ struct AboutView: View {
             }
         }
     }
+}
+
+private func formatMegabytes(_ bytes: Int) -> String {
+    String(format: "%.1f MB", Double(bytes) / 1_000_000)
 }
 
 private struct DonationRow: View {
