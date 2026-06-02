@@ -12,28 +12,18 @@ struct MenuBarView: View {
     private let width: CGFloat = 280
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             header
-            statusRow
+            connectionPanel
             if app.status.isRunning {
                 speedRow
-                Divider().opacity(0.4)
             }
-            profilePicker
-            Divider().opacity(0.4)
             actionsRow
         }
-        .padding(14)
+        .padding(10)
         .frame(width: width)
         .background(
-            LinearGradient(
-                colors: colorScheme == .dark
-                    ? [Color(.sRGB, red: 0.08, green: 0.09, blue: 0.13, opacity: 1),
-                       Color(.sRGB, red: 0.05, green: 0.06, blue: 0.09, opacity: 1)]
-                    : [Color(.sRGB, red: 0.985, green: 0.990, blue: 0.998, opacity: 1),
-                       Color(.sRGB, red: 0.94, green: 0.95, blue: 0.97, opacity: 1)],
-                startPoint: .top, endPoint: .bottom
-            )
+            AppTheme.sidebarBackground(for: colorScheme)
         )
     }
 
@@ -41,9 +31,14 @@ struct MenuBarView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            CloakBrandImage(size: 26, cornerRadius: 7)
-            Text("Cloak")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+            CloakBrandImage(size: 24, cornerRadius: 6)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Cloak")
+                    .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                Text(app.settings.connectionMode.rawValue.capitalized)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             statusPill
         }
@@ -61,18 +56,9 @@ struct MenuBarView: View {
         .foregroundStyle(statusColor)
     }
 
-    private var statusRow: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(app.activeProfile?.name ?? "No profile")
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
+    private var connectionPanel: some View {
+        HStack(alignment: .center, spacing: 10) {
+            profileControl
             Button {
                 Task {
                     if app.status.isRunning { await app.stop() }
@@ -89,56 +75,61 @@ struct MenuBarView: View {
                     Text(app.status.isRunning ? "Stop" : "Connect")
                         .font(.system(size: 12, weight: .semibold))
                 }
+                .frame(width: 92, height: 32)
                 .foregroundColor(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
                 .background(
-                    Capsule().fill(app.status.isRunning
-                                   ? Color.red.opacity(0.88)
-                                   : AppTheme.connectFill(for: colorScheme))
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(app.status.isRunning
+                              ? Color.red.opacity(0.88)
+                              : AppTheme.connectFill(for: colorScheme))
+                        .shadow(color: app.status.isRunning
+                                ? Color.red.opacity(0.20)
+                                : AppTheme.connectShadow(for: colorScheme),
+                                radius: 6, y: 3)
                 )
             }
             .buttonStyle(.plain)
             .disabled(app.status.isTransitioning || (app.activeProfile == nil && !app.status.isRunning))
             .opacity((app.activeProfile == nil && !app.status.isRunning) ? 0.45 : 1)
         }
-    }
-
-    private var speedRow: some View {
-        HStack(spacing: 12) {
-            speedTag(symbol: "arrow.down", value: app.downloadBytesPerSec, color: .blue)
-            speedTag(symbol: "arrow.up",   value: app.uploadBytesPerSec,   color: .purple)
-            Spacer()
-            Text(formatBytes(app.sessionBytesDown + app.sessionBytesUp))
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func speedTag(symbol: String, value: Double, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(color)
-            Text(rate(value))
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .monospacedDigit()
-        }
+        .padding(10)
+        .background(panelBackground)
     }
 
     @ViewBuilder
-    private var profilePicker: some View {
+    private var profileControl: some View {
         if app.profiles.isEmpty {
-            Text("No profiles imported. Open Cloak to add one.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            HStack {
-                Text("Profile")
-                    .font(.system(size: 11, weight: .semibold))
+            HStack(spacing: 8) {
+                Image(systemName: "person.text.rectangle")
+                    .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Spacer()
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Profile")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text("None")
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: "person.text.rectangle")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Profile")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text(app.activeProfile?.name ?? "Select profile")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .layoutPriority(1)
+                Spacer(minLength: 6)
                 Menu {
                     ForEach(app.profiles) { p in
                         Button {
@@ -155,19 +146,47 @@ struct MenuBarView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(app.activeProfile?.name ?? "Select…")
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                    .foregroundStyle(.primary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(AppTheme.controlFill(for: colorScheme))
+                        )
                 }
                 .menuStyle(.borderlessButton)
-                .fixedSize()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var speedRow: some View {
+        HStack(spacing: 6) {
+            speedTag(title: "Down", symbol: "arrow.down", value: app.downloadBytesPerSec, color: .blue)
+            speedTag(title: "Up", symbol: "arrow.up", value: app.uploadBytesPerSec, color: .purple)
+            speedTag(title: "Total", symbol: "sum", value: Double(app.sessionBytesDown + app.sessionBytesUp), color: .mint, isTotal: true)
+        }
+    }
+
+    private func speedTag(title: String, symbol: String, value: Double, color: Color, isTotal: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(color)
+                Text(title)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            Text(isTotal ? formatBytes(UInt64(value)) : rate(value))
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(panelBackground)
     }
 
     private var actionsRow: some View {
@@ -186,7 +205,8 @@ struct MenuBarView: View {
                 NSApp.terminate(nil)
             }
         }
-        .padding(.bottom, 2)
+        .padding(.vertical, 1)
+        .background(panelBackground)
     }
 
     private func footerRow(label: String, icon: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
@@ -214,17 +234,13 @@ struct MenuBarView: View {
         }
     }
 
-    private var subtitle: String {
-        switch app.status {
-        case .running:
-            if let ip = app.egressIP { return "via \(ip)" }
-            return "Connected"
-        case .stopped:
-            return "Click Connect to route through Cloak."
-        case .starting: return "Bringing up the bridge…"
-        case .stopping: return "Tearing down…"
-        case .error(let msg): return msg
-        }
+    private var panelBackground: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(AppTheme.elevatedFill(for: colorScheme))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(AppTheme.faintStroke(for: colorScheme))
+            )
     }
 
     private func rate(_ bytesPerSec: Double) -> String {
@@ -264,7 +280,7 @@ private struct HoverableFooterButton: View {
                     .foregroundStyle(tint)
                 Spacer()
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
