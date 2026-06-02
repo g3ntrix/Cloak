@@ -66,6 +66,7 @@ struct ConnectionRouteCard: View {
         }
         .onReceive(spawnClock) { date in tick(now: date.timeIntervalSinceReferenceDate) }
         .onChange(of: active) { if !$0 { packets.removeAll() } }
+        .onChange(of: app.settings.reduceAnimations) { if $0 { packets.removeAll() } }
     }
 
     private func connector(_ link: Int) -> some View {

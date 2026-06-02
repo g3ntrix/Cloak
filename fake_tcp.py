@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import socket
 import sys
-import threading
-import time
 
 from monitor_connection import MonitorConnection
 from injecter import CapturedPacket, build_tcp_injector
@@ -31,8 +29,13 @@ class FakeTcpInjector:
         self.injector = build_tcp_injector(src_ip, dst_ip, iface_name)
         self.connections = connections
 
-    def fake_send_thread(self, packet: CapturedPacket, connection: FakeInjectiveConnection):
-        time.sleep(0.001)
+    def schedule_fake_send(self, packet: CapturedPacket, connection: FakeInjectiveConnection):
+        connection.running_loop.call_soon_threadsafe(self._schedule_fake_send, packet, connection)
+
+    def _schedule_fake_send(self, packet: CapturedPacket, connection: FakeInjectiveConnection):
+        connection.running_loop.call_later(0.001, self._execute_fake_send, packet, connection)
+
+    def _execute_fake_send(self, packet: CapturedPacket, connection: FakeInjectiveConnection):
         with connection.thread_lock:
             if not connection.monitor:
                 return
@@ -132,7 +135,7 @@ class FakeTcpInjector:
 
             self.injector.pass_packet(packet)
             connection.sch_fake_sent = True
-            threading.Thread(target=self.fake_send_thread, args=(packet, connection), daemon=True).start()
+            self.schedule_fake_send(packet, connection)
             return
         self.on_unexpected_packet(packet, connection, "unexpected outbound packet")
 

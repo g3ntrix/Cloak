@@ -8,6 +8,17 @@ struct PacketEngineStatus {
 }
 
 final class SpoofingEngine {
+    private struct SpoofFlowKey: Hashable, CustomStringConvertible {
+        let sourceIP: String
+        let sourcePort: UInt16
+        let destinationIP: String
+        let destinationPort: UInt16
+
+        var description: String {
+            "\(sourceIP):\(sourcePort)->\(destinationIP):\(destinationPort)"
+        }
+    }
+
     private struct ConnectionState {
         var synSeen = false
         var synAckSeen = false
@@ -15,9 +26,9 @@ final class SpoofingEngine {
     }
 
     private let configuration: TunnelConfiguration
-    private var states: [String: ConnectionState] = [:]
+    private var states: [SpoofFlowKey: ConnectionState] = [:]
+    private var lastConnectionKey: SpoofFlowKey?
     private(set) var inspectedPacketCount = 0
-    private(set) var lastConnectionID: String?
     private(set) var lastEvent: String?
     private(set) var lastFakeClientHelloSize: Int?
 
@@ -28,7 +39,7 @@ final class SpoofingEngine {
     func reload(configuration: TunnelConfiguration) {
         states.removeAll()
         inspectedPacketCount = 0
-        lastConnectionID = nil
+        lastConnectionKey = nil
         lastEvent = "configuration reloaded"
         lastFakeClientHelloSize = nil
     }
@@ -39,33 +50,45 @@ final class SpoofingEngine {
         }
 
         inspectedPacketCount += 1
-        let connectionID = "\(packet.sourceIP):\(packet.sourcePort)->\(packet.destinationIP):\(packet.destinationPort)"
-        lastConnectionID = connectionID
+        let key = SpoofFlowKey(
+            sourceIP: packet.sourceIP,
+            sourcePort: packet.sourcePort,
+            destinationIP: packet.destinationIP,
+            destinationPort: packet.destinationPort
+        )
+        lastConnectionKey = key
 
-        var state = states[connectionID] ?? ConnectionState()
-
-        if packet.destinationPort == UInt16(configuration.connectPort) {
-            if packet.syn, !packet.ack {
-                state.synSeen = true
-                lastEvent = "outbound syn seen"
-            } else if packet.ack, !packet.syn, state.synSeen, !state.established {
-                state.established = true
-                let fakeClientHello = TLSClientHelloBuilder.build(
-                    random: randomData(length: 32),
-                    sessionID: randomData(length: 32),
-                    targetSNI: configuration.fakeSNI,
-                    keyShare: randomData(length: 32)
-                )
-                lastFakeClientHelloSize = fakeClientHello.count
-                lastEvent = "connection established candidate; fake hello prepared"
-            } else if !packet.payload.isEmpty {
-                lastEvent = "payload observed size=\(packet.payload.count)"
-            }
-        } else {
-            lastEvent = "non-target packet observed"
+        if packet.rst || packet.fin {
+            states.removeValue(forKey: key)
+            lastEvent = packet.rst ? "outbound rst observed" : "outbound fin observed"
+            return
         }
 
-        states[connectionID] = state
+        guard packet.destinationPort == UInt16(configuration.connectPort) else {
+            lastEvent = "non-target packet observed"
+            return
+        }
+
+        var state = states[key] ?? ConnectionState()
+
+        if packet.syn, !packet.ack {
+            state.synSeen = true
+            lastEvent = "outbound syn seen"
+        } else if packet.ack, !packet.syn, state.synSeen, !state.established {
+            state.established = true
+            let fakeClientHello = TLSClientHelloBuilder.build(
+                random: randomData(length: 32),
+                sessionID: randomData(length: 32),
+                targetSNI: configuration.fakeSNI,
+                keyShare: randomData(length: 32)
+            )
+            lastFakeClientHelloSize = fakeClientHello.count
+            lastEvent = "connection established candidate; fake hello prepared"
+        } else if !packet.payload.isEmpty {
+            lastEvent = "payload observed size=\(packet.payload.count)"
+        }
+
+        states[key] = state
     }
 
     func observeInboundPacket(_ packetData: Data) {
@@ -74,27 +97,39 @@ final class SpoofingEngine {
         }
 
         inspectedPacketCount += 1
-        let connectionID = "\(packet.destinationIP):\(packet.destinationPort)->\(packet.sourceIP):\(packet.sourcePort)"
-        lastConnectionID = connectionID
+        let key = SpoofFlowKey(
+            sourceIP: packet.destinationIP,
+            sourcePort: packet.destinationPort,
+            destinationIP: packet.sourceIP,
+            destinationPort: packet.sourcePort
+        )
+        lastConnectionKey = key
 
-        var state = states[connectionID] ?? ConnectionState()
+        if packet.rst || packet.fin {
+            states.removeValue(forKey: key)
+            lastEvent = packet.rst ? "rst observed" : "fin observed"
+            return
+        }
+
+        guard packet.sourcePort == UInt16(configuration.connectPort) else {
+            lastEvent = "non-target inbound packet observed"
+            return
+        }
+
+        var state = states[key] ?? ConnectionState()
         if packet.syn, packet.ack {
             state.synAckSeen = true
             lastEvent = "inbound syn-ack seen"
-        } else if packet.rst {
-            lastEvent = "rst observed"
-        } else if packet.fin {
-            lastEvent = "fin observed"
         } else if packet.ack, !packet.payload.isEmpty {
             lastEvent = "inbound payload observed size=\(packet.payload.count)"
         }
-        states[connectionID] = state
+        states[key] = state
     }
 
     func status() -> PacketEngineStatus {
         PacketEngineStatus(
             trackedConnections: states.count,
-            lastConnectionID: lastConnectionID,
+            lastConnectionID: lastConnectionKey?.description,
             lastEvent: lastEvent,
             lastFakeClientHelloSize: lastFakeClientHelloSize
         )

@@ -46,6 +46,7 @@ final class PythonListener {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         p.arguments = ["-n", SudoPrivilege.wrapperPath]
+        p.qualityOfService = .utility
 
         let out = Pipe()
         p.standardOutput = out

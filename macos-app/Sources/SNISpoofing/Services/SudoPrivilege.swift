@@ -15,7 +15,7 @@ enum SudoPrivilege {
     static let proxyHelperPath = "/usr/local/bin/cloak-proxy"
     static let tunHelperPath = "/usr/local/bin/cloak-tun"
     /// Bumped whenever any embedded script changes — forces re-install.
-    static let wrapperVersion = "14"
+    static let wrapperVersion = "15"
 
     enum SudoError: LocalizedError {
         case promptCancelled
@@ -45,6 +45,7 @@ enum SudoPrivilege {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         p.arguments = ["-n", wrapperPath, "--kill-leftover"]
+        p.qualityOfService = .utility
         p.standardOutput = Pipe()
         p.standardError = Pipe()
         try? p.run()
@@ -57,6 +58,7 @@ enum SudoPrivilege {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         p.arguments = ["-n", proxyHelperPath] + args
+        p.qualityOfService = .utility
         p.standardOutput = Pipe()
         p.standardError = Pipe()
         do { try p.run() } catch { return -1 }
@@ -71,6 +73,7 @@ enum SudoPrivilege {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         p.arguments = ["-n", tunHelperPath] + args
+        p.qualityOfService = .utility
         let out = Pipe()
         p.standardOutput = out
         p.standardError = out
@@ -123,6 +126,7 @@ enum SudoPrivilege {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         p.arguments = ["-n", helper, "--self-check"]
+        p.qualityOfService = .utility
         let out = Pipe()
         p.standardOutput = out
         p.standardError = out
@@ -142,6 +146,7 @@ enum SudoPrivilege {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
         p.arguments = ["-n", wrapperPath, "--core-path"]
+        p.qualityOfService = .utility
         let out = Pipe()
         p.standardOutput = out
         p.standardError = Pipe()
@@ -190,6 +195,12 @@ enum SudoPrivilege {
         export CLOAK_CONFIG=\"\(configPath)\"
         export PYTHONUNBUFFERED=1
         export HOME=\"\(NSHomeDirectory())\"
+        if [ -x /usr/sbin/taskpolicy ] && [ -x /usr/bin/nice ]; then
+          exec /usr/sbin/taskpolicy -b /usr/bin/nice -n 10 \"$CORE\" \"$@\"
+        fi
+        if [ -x /usr/bin/nice ]; then
+          exec /usr/bin/nice -n 10 \"$CORE\" \"$@\"
+        fi
         exec \"$CORE\" \"$@\"
         """
 
@@ -296,11 +307,25 @@ enum SudoPrivilege {
             fi
             utun_before="$(/sbin/ifconfig -l | /usr/bin/tr ' ' '\\n' | /usr/bin/grep '^utun' || true)"
             : > "$LOG_FILE"
-            nohup "$TUN2SOCKS_BIN" \\
-              -device "utun" \\
-              -proxy "socks5://$SOCKS_HOST:$SOCKS_PORT" \\
-              -loglevel "$LOGLEVEL" \\
-              >> "$LOG_FILE" 2>&1 &
+            if [ -x /usr/sbin/taskpolicy ] && [ -x /usr/bin/nice ]; then
+              nohup /usr/sbin/taskpolicy -b /usr/bin/nice -n 10 "$TUN2SOCKS_BIN" \\
+                -device "utun" \\
+                -proxy "socks5://$SOCKS_HOST:$SOCKS_PORT" \\
+                -loglevel "$LOGLEVEL" \\
+                >> "$LOG_FILE" 2>&1 &
+            elif [ -x /usr/bin/nice ]; then
+              nohup /usr/bin/nice -n 10 "$TUN2SOCKS_BIN" \\
+                -device "utun" \\
+                -proxy "socks5://$SOCKS_HOST:$SOCKS_PORT" \\
+                -loglevel "$LOGLEVEL" \\
+                >> "$LOG_FILE" 2>&1 &
+            else
+              nohup "$TUN2SOCKS_BIN" \\
+                -device "utun" \\
+                -proxy "socks5://$SOCKS_HOST:$SOCKS_PORT" \\
+                -loglevel "$LOGLEVEL" \\
+                >> "$LOG_FILE" 2>&1 &
+            fi
             T2S_PID=$!
             echo "$T2S_PID" > "$PID_FILE"
             # Wait up to ~3s for the dynamic utun device to appear.

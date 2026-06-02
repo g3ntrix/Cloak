@@ -236,3 +236,4 @@ macos-app/vendor/
 .temp/
 macos-app/logo/Cloak.png
 macos-app/scripts
+.vscode/launch.json

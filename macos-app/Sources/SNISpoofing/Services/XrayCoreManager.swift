@@ -23,8 +23,18 @@ final class XrayCoreManager {
         }
 
         let p = Process()
-        p.executableURL = binary
-        p.arguments = ["run", "-c", configURL.path]
+        if FileManager.default.isExecutableFile(atPath: "/usr/sbin/taskpolicy"),
+           FileManager.default.isExecutableFile(atPath: "/usr/bin/nice") {
+            p.executableURL = URL(fileURLWithPath: "/usr/sbin/taskpolicy")
+            p.arguments = ["-b", "/usr/bin/nice", "-n", "10", binary.path, "run", "-c", configURL.path]
+        } else if FileManager.default.isExecutableFile(atPath: "/usr/bin/nice") {
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/nice")
+            p.arguments = ["-n", "10", binary.path, "run", "-c", configURL.path]
+        } else {
+            p.executableURL = binary
+            p.arguments = ["run", "-c", configURL.path]
+        }
+        p.qualityOfService = .utility
         if FileManager.default.fileExists(atPath: res.appendingPathComponent("geoip.dat").path) {
             p.currentDirectoryURL = res
         }

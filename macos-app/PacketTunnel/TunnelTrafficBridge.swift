@@ -19,6 +19,8 @@ final class TunnelTrafficBridge {
     private let socksProxyPort: Int?
     private let logger: Logger
     private let statusHandler: (TunnelTrafficBridgeStatus) -> Void
+    private let sessionSweepInterval: TimeInterval = 60
+    private let sessionIdleTimeout: TimeInterval = 120
     private let stateQueue = DispatchQueue(label: "com.local.sni.macos.tunnel.bridge")
     private var tcpSessions: [TCPFlowKey: TCPFlowSession] = [:]
     private var udpSessions: [UDPFlowKey: UDPFlowSession] = [:]
@@ -58,6 +60,7 @@ final class TunnelTrafficBridge {
             self.emitStatus(detailOverride: nil, force: true)
             self.logger.info("Tunnel bridge starting | proxy=127.0.0.1:\(self.httpProxyPort, privacy: .public)")
             self.readNextPackets()
+            self.startSweeper()
         }
     }
 
@@ -95,6 +98,38 @@ final class TunnelTrafficBridge {
                 self.handlePackets(packets)
                 self.readNextPackets()
             }
+        }
+    }
+
+    private func startSweeper() {
+        stateQueue.asyncAfter(deadline: .now() + sessionSweepInterval) { [weak self] in
+            guard let self, self.running else { return }
+            self.sweepIdleSessions()
+            self.startSweeper()
+        }
+    }
+
+    private func sweepIdleSessions() {
+        let now = Date()
+        let expiredTCPKeys = tcpSessions.compactMap { key, session in
+            now.timeIntervalSince(session.lastActive) > sessionIdleTimeout ? key : nil
+        }
+        let expiredUDPKeys = udpSessions.compactMap { key, session in
+            now.timeIntervalSince(session.lastActive) > sessionIdleTimeout ? key : nil
+        }
+
+        for key in expiredTCPKeys {
+            tcpSessions.removeValue(forKey: key)?.stop()
+        }
+        for key in expiredUDPKeys {
+            udpSessions.removeValue(forKey: key)?.stop()
+        }
+
+        let expiredCount = expiredTCPKeys.count + expiredUDPKeys.count
+        if expiredCount > 0 {
+            lastDetail = "evicted \(expiredCount) idle tunnel sessions"
+            emitStatus(detailOverride: lastDetail, force: true)
+            logger.info("Tunnel bridge idle sweep evicted sessions | tcp=\(expiredTCPKeys.count, privacy: .public) | udp=\(expiredUDPKeys.count, privacy: .public)")
         }
     }
 
@@ -299,6 +334,7 @@ private final class TCPFlowSession {
     private let advertisedWindowScale: UInt8?
     private var receivedConnectResponse = false
     private var closed = false
+    var lastActive = Date()
 
     init(
         key: TCPFlowKey,
@@ -330,6 +366,7 @@ private final class TCPFlowSession {
     func handle(_ packet: ParsedIPv4TCPPacket) {
         stateQueue.async {
             guard !self.closed else { return }
+            self.markActive()
             self.onActivity("flow \(self.key.description) flags syn=\(packet.syn) ack=\(packet.ack) fin=\(packet.fin) rst=\(packet.rst) payload=\(packet.payload.count)")
 
             if packet.rst {
@@ -515,6 +552,7 @@ private final class TCPFlowSession {
     }
 
     private func appendClientData(_ payload: Data) {
+        markActive()
         pendingClientBytes.append(payload)
         flushPendingClientDataIfNeeded()
     }
@@ -531,6 +569,7 @@ private final class TCPFlowSession {
                     self.close()
                     return
                 }
+                self.markActive()
                 self.onTraffic(data.count, 0)
                 self.onActivity("client data forwarded \(data.count) bytes")
             }
@@ -539,6 +578,7 @@ private final class TCPFlowSession {
 
     private func deliverUpstreamBytes(_ bytes: Data) {
         guard !closed else { return }
+        markActive()
         var offset = 0
         while offset < bytes.count {
             let chunkSize = min(1300, bytes.count - offset)
@@ -636,6 +676,10 @@ private final class TCPFlowSession {
         onFinish(key)
     }
 
+    private func markActive() {
+        lastActive = Date()
+    }
+
     private static func randomSequence() -> UInt32 {
         UInt32.random(in: 1 ... UInt32.max)
     }
@@ -674,6 +718,7 @@ private final class UDPFlowSession {
     private var relayConnection: NWConnection?
     private var pendingClientPayloads: [Data] = []
     private var closed = false
+    var lastActive = Date()
 
     init(
         key: UDPFlowKey,
@@ -700,6 +745,7 @@ private final class UDPFlowSession {
     func handle(_ packet: ParsedIPv4UDPPacket) {
         stateQueue.async {
             guard !self.closed else { return }
+            self.markActive()
 
             if packet.payload.isEmpty {
                 self.onActivity("udp keepalive \(self.key.description)")
@@ -880,6 +926,7 @@ private final class UDPFlowSession {
                     self.close()
                     return
                 }
+                self.markActive()
                 self.onTraffic(payload.count, 0)
                 self.onActivity("udp payload forwarded \(payload.count) bytes")
             }
@@ -910,6 +957,7 @@ private final class UDPFlowSession {
             logger.debug("Ignoring non-SOCKS UDP datagram for \(self.key.description, privacy: .public) | bytes=\(data.count, privacy: .public) | prefix=\(prefix, privacy: .public)")
             return
         }
+        markActive()
         logger.debug("UDP relay response parsed for \(self.key.description, privacy: .public) | source=\(response.sourceIP):\(response.sourcePort, privacy: .public) | payload=\(response.payload.count, privacy: .public)")
 
         let packet = IPv4UDPPacketBuilder.buildPacket(
@@ -946,6 +994,10 @@ private final class UDPFlowSession {
         relayConnection = nil
         controlConnection = nil
         onFinish(key)
+    }
+
+    private func markActive() {
+        lastActive = Date()
     }
 
     private static func parseSOCKSAssociateResponse(_ data: Data) -> (host: Network.NWEndpoint.Host, port: Network.NWEndpoint.Port)? {

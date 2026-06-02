@@ -15,7 +15,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         logger.info("Packet tunnel starting for \(self.configuration.connectIP, privacy: .public) mode=\(self.configuration.connectionMode.rawValue, privacy: .public)")
 
         let settings = makeNetworkSettings(using: configuration)
-        settings.mtu = 1500
+        settings.mtu = 1420
         logger.debug(
             "Tunnel settings prepared | remote=\(self.configuration.connectIP, privacy: .public):\(self.configuration.connectPort, privacy: .public) | upstream=\(self.configuration.upstreamIP, privacy: .public):\(self.configuration.upstreamPort, privacy: .public) | httpProxy=\(self.configuration.httpProxyPort ?? -1, privacy: .public) | socksProxy=\(self.configuration.socksProxyPort ?? -1, privacy: .public)"
         )

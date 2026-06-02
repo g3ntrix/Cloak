@@ -158,11 +158,13 @@ struct DashboardView: View {
                     Divider().frame(height: 26)
                     totalColumn
                 }
-                ActivityPulseMeter(
-                    downValue: app.downloadBytesPerSec,
-                    upValue: app.uploadBytesPerSec,
-                    peak: peakHint
-                )
+                if !app.settings.reduceAnimations {
+                    ActivityPulseMeter(
+                        downValue: app.downloadBytesPerSec,
+                        upValue: app.uploadBytesPerSec,
+                        peak: peakHint
+                    )
+                }
             }
         }
     }
@@ -352,7 +354,7 @@ struct StatusOrb: View {
     let status: AppState.Status
     var reduceMotion: Bool = false
     @State private var pulse = false
-    private var animatePulse: Bool { status.isRunning && !reduceMotion }
+    private var animatePulse: Bool { status.isTransitioning && !reduceMotion }
     var body: some View {
         ZStack {
             Circle().fill(color.opacity(0.22)).frame(width: 46, height: 46)
